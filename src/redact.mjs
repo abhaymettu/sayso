@@ -160,6 +160,8 @@ const hex = (cp) => `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
 
 const inRanges = (cp, ranges) => ranges.some(([low, high]) => cp >= low && cp <= high);
 
+// Format, combining and private-use characters, whichever a list would miss. Each can make two paths look like one.
+const NO_GLYPH_OF_ITS_OWN = /[\p{Cf}\p{Mn}\p{Me}\p{Co}\uFFFC\u{1D159}]/u;
 const INVISIBLE = [[0x00ad, 0x00ad], [0x034f, 0x034f], [0x200b, 0x200d], [0x2060, 0x2060], [0x2061, 0x2064], [0xfe00, 0xfe0f], [0xfeff, 0xfeff], [0xfff9, 0xfffb], [0x1d173, 0x1d17a], [0xe0100, 0xe01ef]];
 // Characters that print as nothing but are not a shell's word separator, so `rm\u00a0-rf` shown plainly would read as `rm -rf`.
 const BLANKS = "\\u00a0\\u1680\\u180e\\u2000-\\u200a\\u202f\\u205f\\u2800\\u3000\\u3164\\uffa0\\u115f\\u1160\\u17b4\\u17b5";
@@ -168,9 +170,9 @@ const BLANK_RUN = new RegExp(`[ \\t${BLANKS}]{16,}`, "g");
 // Letters that can pass for Latin ones. A warning, not a verdict: the real code points are shown either way.
 const LOOK_ALIKE = [[0x017f, 0x017f], [0x0370, 0x058f], [0x13a0, 0x13ff], [0x1d00, 0x1dbf], [0x1f00, 0x1fff], [0x2044, 0x2044], [0x2100, 0x218f], [0x2215, 0x2215], [0x2c80, 0x2cff], [0xa4d0, 0xa4ff], [0xa720, 0xa7ff], [0xff00, 0xffef], [0x1d400, 0x1d7ff]];
 
-const NO_COMMAND_LINE = /^[ \t]*(?:#.*|:|true)?[ \t]*$/;
+const NO_COMMAND_LINE = /^[ \t]*(?:#.*|:|true|\\)?[ \t]*$/;
 const MAX_FILLER_RUN = 8;
-const MANY_LINES = 80;
+const MANY_LINES = 30;
 
 /** Padding pushes the real target off the screen, and a person has to be told to read to the end. */
 function fillerWarning(text, warnings) {
@@ -213,6 +215,9 @@ export function faithful(text) {
       out += `⟦tag ${String.fromCodePoint(cp - 0xe0000)}⟧`;
     } else if (BLANK_CHAR.test(ch)) {
       warnings.add("unusual blank characters");
+      out += `⟦${hex(cp)}⟧`;
+    } else if (NO_GLYPH_OF_ITS_OWN.test(ch)) {
+      warnings.add("invisible characters");
       out += `⟦${hex(cp)}⟧`;
     } else {
       if (inRanges(cp, LOOK_ALIKE)) warnings.add("look-alike letters");

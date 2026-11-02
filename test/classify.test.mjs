@@ -465,3 +465,38 @@ test('measure tool reports aggregates and keeps command text off stdout', () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('mcp: a command is read in every shape servers use', () => {
+  for (const input of [{ command: ['rm', '-rf', 'victim'] }, { command: 'rm', arguments: ['-rf', 'victim'] }, { args: ['rm', '-rf', 'victim'] }, { program: 'rm', args: ['-rf', 'victim'] }, { cmdline: 'rm -rf victim' }, { exec: 'rm -rf victim' }, { run: 'rm -rf victim' }, { code: 'rm -rf victim' }, { commands: ['ls', 'rm -rf victim'] }]) {
+    assert.equal(classifyToolCall('mcp__x__do', input, CTX)?.risk, 'destructive', JSON.stringify(input));
+  }
+  assert.equal(classifyToolCall('mcp__x__do', { command: ['ls', '-la'] }, CTX), null);
+});
+
+test('mcp: a tool named for what it does is held, and a read of the same thing is not', () => {
+  for (const name of ['rm', 'rmdir', 'unlink', 'erase', 'truncate', 'move_file', 'rename', 'edit_file', 'patch', 'save_file', 'append', 'create_file', 'spawn', 'spawn_process', 'launch', 'system', 'sh', 'zsh', 'python', 'node', 'applescript', 'invoke', 'kill', 'stop_process', 'push', 'force_push', 'reset', 'merge_pull_request', 'kubectl', 's3_rm', 'refund', 'forward']) {
+    assert.ok(classifyToolCall(`mcp__x__${name}`, {}, CTX), name);
+  }
+  for (const name of ['get_node', 'list_files', 'truncate_text', 'read_file', 'search', 'create_issue']) assert.equal(classifyToolCall(`mcp__x__${name}`, {}, CTX), null, name);
+});
+
+test('mcp: paths and sql under the keys servers use', () => {
+  assert.equal(classifyToolCall('mcp__x__do', { location: '~/.claude/settings.json' }, CTX)?.risk, 'self');
+  for (const input of [{ uri: 'file:///Users/dev/.ssh/id_rsa' }, { pathname: '/Users/dev/.ssh/id_rsa' }]) assert.equal(classifyToolCall('mcp__x__do', input, CTX)?.risk, 'credentials', JSON.stringify(input));
+  assert.equal(classifyToolCall('mcp__x__do', { url: 'https://example.com/a' }, CTX), null);
+  for (const input of [{ query: '/**/drop table users' }, { query: '(drop table users)' }, { query: '-- x\ndrop table users' }, { sql: 'UPDATE users SET a=1' }, { q: 'drop table users' }]) assert.equal(classifyToolCall('mcp__db__do', input, CTX)?.risk, 'destructive', JSON.stringify(input));
+  assert.equal(classifyToolCall('mcp__db__do', { sql: "UPDATE users SET a=1 WHERE id=2" }, CTX), null);
+});
+
+test('characters with no glyph of their own raise a warning, whichever list they would miss', () => {
+  for (const cp of [0x180b, 0x180f, 0x1d159, 0x1bca0, 0x13430, 0x110bd, 0xfffc, 0x0336, 0x20e3, 0xe000]) {
+    const { warnings, text } = forDisplay(`rm -rf a${String.fromCodePoint(cp)}b`);
+    assert.ok(warnings.includes('invisible characters'), cp.toString(16));
+    assert.ok(text.includes('⟦U+'), cp.toString(16));
+  }
+});
+
+test('a lone backslash is filler, and many lines are called many well before they fill a phone', () => {
+  assert.ok(forDisplay(`rm -rf ./cache \\\n${'\\\n'.repeat(77)}~/Documents`).warnings.includes('long run of lines with no command in them'));
+  assert.ok(forDisplay(`${'echo ok\n'.repeat(40)}rm -rf victim`).warnings.includes('many lines to read'));
+});

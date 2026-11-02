@@ -26,6 +26,8 @@ export const PRESETS = {
 
 // These stay with the human whatever the file says. Wiping a disk or disarming the gate is never an agent's call.
 const FLOORS = ["catastrophic", "self"];
+// A wildcard stays inside one server, so `mcp__git*` can't also trust a server named `github-evil`.
+const NAMES_A_SERVER = /^mcp__[^*]+?__[^*]*\*?$/;
 
 export function normalizePolicy(raw) {
   const base = PRESETS[raw?.preset] ?? PRESETS.strict;
@@ -40,6 +42,8 @@ export function normalizePolicy(raw) {
   }
   const questions = ["options", "free_text", "off"].includes(raw?.questions) ? raw.questions : base.questions;
   const hold = Number.isFinite(raw?.hold_seconds) ? raw.hold_seconds : base.hold_seconds;
+  const trust_tools = Array.isArray(raw?.trust_tools) ? raw.trust_tools.filter((rule) => typeof rule === "string") : base.trust_tools;
+  for (const rule of trust_tools) if (!NAMES_A_SERVER.test(rule)) notes.push(`trust_tools: "${rule}" does not name a whole server, so it was ignored. Write mcp__server__* or mcp__server__tool`);
   const hold_seconds = Math.max(5, Math.min(hold, MAX_HOLD_SECONDS));
   if (hold !== hold_seconds) notes.push(`hold_seconds: clamped to ${hold_seconds}`);
   return {
@@ -49,7 +53,7 @@ export function normalizePolicy(raw) {
     messages: raw?.messages === undefined ? base.messages : raw.messages === true,
     hold_seconds,
     pass: Array.isArray(raw?.pass) ? raw.pass.filter((p) => typeof p === "string") : base.pass,
-    trust_tools: Array.isArray(raw?.trust_tools) ? raw.trust_tools.filter((t) => typeof t === "string" && t.startsWith("mcp__") && t.length > 5) : base.trust_tools,
+    trust_tools: trust_tools.filter((rule) => NAMES_A_SERVER.test(rule)),
     notes,
   };
 }
@@ -70,7 +74,7 @@ export function loadPolicy(file) {
 // Drops only what a tool's name alone raised. Sayso's own send_message is always trusted, since the policy already decides it.
 export function matchesToolRule(tool, rules) {
   if (tool === "mcp__sayso__send_message") return true;
-  return rules.some((rule) => (rule.endsWith("*") ? tool.startsWith(rule.slice(0, -1)) : tool === rule));
+  return rules.some((rule) => (rule.endsWith("*") ? tool.startsWith(rule.slice(0, -1)) && !tool.slice(rule.length - 1).includes("__") : tool === rule));
 }
 
 export function matchesPassRule(command, rules) {

@@ -230,6 +230,8 @@ dl.rows dd { overflow-wrap: anywhere; min-width: 0; }
 .reasons h3 { color: var(--ink-2); font-size: 0.765rem; font-weight: 400; line-height: 1.4; padding-inline: 1rem; }
 .reasons li { overflow-wrap: anywhere; }
 
+.command-end { display: block; height: 1px; }
+
 /* The action area stays under the thumb while a long command scrolls beneath it. */
 .actions {
   position: sticky;

@@ -3095,8 +3095,6 @@ const RULES = {
   tmate: ruleTmux,
   byobu: ruleTmux,
   xte: always(SELF, TYPES_KEYS),
-  dtach: ruleAnyArg(/^-p$/, SELF, TYPES_KEYS),
-  abduco: ruleAnyArg(/^-a$/, SELF, TYPES_KEYS),
   it2api: ruleTerminalRemote(/^send-text$/),
   xdotool: always(SELF, TYPES_KEYS),
   ydotool: always(SELF, TYPES_KEYS),
@@ -3213,6 +3211,15 @@ RULES.osascript = (args, io, st, key) => {
   if (args.some((arg) => arg.text.startsWith('-l')) || (!io.heredoc && !args.some((arg) => arg.text.startsWith('-e')))) flag(st, SELF, TYPES_KEYS);
   readOsascript(args, io, st, key);
 };
+
+// These also run a program given to them, so they are listed as runners and only gain this.
+for (const [name, types] of [['dtach', '-p'], ['abduco', '-a']]) {
+  const runner = RULES[name];
+  RULES[name] = (args, io, st, key) => {
+    if (hasFlag(args, types)) flag(st, SELF, TYPES_KEYS);
+    runner(args, io, st, key);
+  };
+}
 
 export function classifyShell(command, ctx) {
   deadline = performance.now() + MAX_CLASSIFY_MS;

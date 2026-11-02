@@ -260,7 +260,7 @@ export async function startDaemon(paths = statePaths()) {
         conn.end(`${JSON.stringify({ ok: true })}\n`);
         return;
       case "deny":
-        conn.end(`${JSON.stringify(box.deny(message.request_id, { type: "owner", name: "local terminal" }, message.reason))}\n`);
+        conn.end(`${JSON.stringify(box.deny(message.request_id, { type: "owner", name: "someone at the owner socket" }, message.reason))}\n`);
         return;
       case "shutdown":
         conn.end(`${JSON.stringify({ ok: true })}\n`);

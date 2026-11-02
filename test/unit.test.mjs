@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, test } from "node:test";
 import { MAX_HOLD_SECONDS } from "../src/paths.mjs";
 import { openAudit, verifyAudit } from "../src/audit.mjs";
-import { matchesPassRule, normalizePolicy, PRESETS } from "../src/policy.mjs";
+import { matchesPassRule, matchesToolRule, normalizePolicy, PRESETS } from "../src/policy.mjs";
 import { faithful, forDisplay, redact } from "../src/redact.mjs";
 import { encodeDoc, generatePairing, signAsDevice, verifyApproval } from "../src/sign.mjs";
 
@@ -152,6 +152,14 @@ describe("policy", () => {
   test("hold time stays under the hook timeout", () => {
     assert.equal(normalizePolicy({ hold_seconds: 99999 }).hold_seconds, 3000);
     assert.equal(normalizePolicy({ hold_seconds: 0 }).hold_seconds, 5);
+  });
+  test("trust_tools refuses a wildcard that doesn't name a whole server, and says so", () => {
+    const p = normalizePolicy({ trust_tools: ["mcp__*", "mcp__git*", "mcp__x__*", "mcp__x__run", "nonsense"] });
+    assert.deepEqual(p.trust_tools, ["mcp__x__*", "mcp__x__run"]);
+    assert.equal(p.notes.filter((note) => /whole server/.test(note)).length, 3);
+    assert.equal(matchesToolRule("mcp__x__evil", p.trust_tools), true);
+    assert.equal(matchesToolRule("mcp__x__evil__tool", p.trust_tools), false, "a server named x__evil is another server");
+    assert.equal(matchesToolRule("mcp__github-evil__run", ["mcp__git__*"]), false);
   });
   test("a pass rule never covers a compound command", () => {
     const rules = ["rm -rf cache", "rm -rf cache/.*"];

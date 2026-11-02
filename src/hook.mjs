@@ -31,7 +31,7 @@ const permissionRequest = (decision) => writeAndExit({ hookSpecificOutput: { hoo
 
 function startDaemonDetached() {
   const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "server.mjs");
-  const child = spawn(process.execPath, [server], { detached: true, stdio: "ignore", env: process.env });
+  const child = spawn(process.execPath, ["--disable-sigusr1", server], { detached: true, stdio: "ignore", env: process.env });
   child.unref();
 }
 
@@ -72,7 +72,6 @@ function sessionFields(input) {
     cwd: input.cwd,
     permission_mode: input.permission_mode,
     pid: Number(process.env.CLAUDE_PID) || undefined,
-    entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT,
   };
 }
 
@@ -83,8 +82,11 @@ function holdAtDaemon(payload) {
     // Until the daemon says `opened`, only this ends the wait. A stopped daemon still accepts connections.
     let deadline = started + OPEN_LIMIT_MS;
     let socket = null;
+    const wrapper = process.ppid;
     // Wall clock, so a hold that spans a laptop sleep ends on wake rather than running on.
     setInterval(() => {
+      // With the wrapper gone the session has moved on, and nobody should be asked to sign a call that can no longer run.
+      if (process.ppid !== wrapper) process.exit(2);
       if (Date.now() <= deadline) return;
       resolve({ failure: "no answer from the sayso daemon in time" });
       socket?.destroy();

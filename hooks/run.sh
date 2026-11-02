@@ -22,6 +22,7 @@ if [ -e /etc/sayso/hardened ]; then unset HOME; fi
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 mode=$2
 node_bin=${SAYSO_NODE:-node}
+if [ -z "$SAYSO_NODE" ] && [ -r "$HOME/.sayso/node-path" ]; then node_bin=$(cat "$HOME/.sayso/node-path"); fi
 if ! command -v "$node_bin" >/dev/null 2>&1; then
   # The environment is clean by now, so a plugin install has no PATH of the person's own to search. A system install comes
   # first and is never replaced by a folder in the home, which any process of this user can write to.

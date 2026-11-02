@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { openAudit } from "./audit.mjs";
-import { matchesPassRule, matchesToolRule } from "./policy.mjs";
+import { RISKS, matchesPassRule, matchesToolRule } from "./policy.mjs";
 import { faithful, forDisplay, redact } from "./redact.mjs";
 import { encodeDoc, verifyApproval } from "./sign.mjs";
 
@@ -17,6 +17,14 @@ const MAX_PENDING_PER_SESSION = 8;
 const MAX_PENDING = 64;
 const TEXT_LIMIT_MS = 2000;
 const REDACTED = "part of this is hidden as a possible secret, and the hidden part could be a command or a path";
+// A key's or token's own shape can't hold a command. What these markers replaced could, so nobody can sign over one.
+const HIDES_ANYTHING = /\[redacted(?: blob| hex| encoded)?\]/;
+// A session writes these fields itself, and they reach the agent outside `untrusted`, so only known values get that far.
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,128}$/;
+const KINDS = new Set(["tool", "question", "plan", "prompt"]);
+const REQUEST_RISKS = new Set([...RISKS, "question"]);
+const PERMISSION_MODES = new Set(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"]);
 
 const SESSION_STATE = {
   SessionStart: "idle",
@@ -112,6 +120,9 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
   const sessionName = (s) => (s?.cwd ? clip(path.basename(s.cwd), 120) : "unknown");
 
   function touchSession(id, fields) {
+    fields.permission_mode = PERMISSION_MODES.has(fields.permission_mode) ? fields.permission_mode : undefined;
+    fields.attended = typeof fields.attended === "boolean" ? fields.attended : undefined;
+    fields.pid = Number.isInteger(fields.pid) ? fields.pid : undefined;
     let s = sessions.get(id);
     if (!s) {
       s = { session_id: id, state: "idle", started_at: new Date(now()).toISOString(), last_message: null };
@@ -134,14 +145,13 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
 
   // Hook reports run as separate processes and can arrive out of order, so each carries the time it started.
   function report(input) {
-    if (!input?.session_id) return;
+    if (!SESSION_ID.test(input?.session_id ?? "")) return;
     const t = Number(input.t) || now();
     const s = touchSession(input.session_id, {
       cwd: input.cwd,
       permission_mode: input.permission_mode ?? sessions.get(input.session_id)?.permission_mode,
       pid: input.pid ?? sessions.get(input.session_id)?.pid,
       attended: input.attended ?? sessions.get(input.session_id)?.attended,
-      entrypoint: input.entrypoint ?? sessions.get(input.session_id)?.entrypoint,
     });
     if (s.last_t && t < s.last_t) return;
     s.last_t = t;
@@ -190,16 +200,17 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
         pass = within(() => matchesPassRule(input?.command, state.policy.pass));
       } catch {}
     }
-    if (pass && !dialog) audit.append({ session: session_id, tool, risk, input_hmac: inputHmac(input), decision: "passed", actor: { type: "policy", name: "pass rule" } });
+    if (pass && !dialog) audit.append({ session: session_id, tool, risk, input_hmac: inputHmac(input), decision: "passed", actor: { type: "hook", name: "a hook reported this, and it matched a pass rule" } });
     return { pass };
   }
 
-  function openRequest({ session_id, cwd, kind, risk, why, warnings, tool, input, permission_mode, attended, dialog, pid, entrypoint, onDecision }) {
+  function openRequest({ session_id, cwd, kind, risk, why, warnings, tool, input, permission_mode, attended, dialog, pid, onDecision }) {
+    if (!SESSION_ID.test(session_id ?? "") || !KINDS.has(kind) || !REQUEST_RISKS.has(risk) || !TOOL_NAME.test(tool ?? "")) return refuseRequest({ input, onDecision }, "a malformed request", "sayso: refused a malformed request, so it was not run.");
     const pending = [...requests.values()].filter((r) => r.status === "pending");
     const refused = { session_id, tool, risk, input, onDecision };
     if (pending.length >= MAX_PENDING) return refuseRequest(refused, "too many requests pending", "too many requests pending");
     if (pending.filter((r) => r.session_id === session_id).length >= MAX_PENDING_PER_SESSION) return refuseRequest(refused, "too many requests pending for this session", "too many requests pending for this session");
-    const s = touchSession(session_id, { cwd, permission_mode, attended, pid, entrypoint });
+    const s = touchSession(session_id, { cwd, permission_mode, attended, pid });
 
     const hold = state.policy.hold_seconds;
     const created = now();
@@ -232,6 +243,8 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
       onDecision,
     };
     if (display.truncated || (kind !== "question" && display.warnings.length)) request.approver = "human";
+    // A signature says the person read this. Past these two they could not have, and a signature would release the full input.
+    request.unread = kind !== "question" && (display.truncated || HIDES_ANYTHING.test(display.text));
 
     // Nobody registered, nobody to ask. A headless run should find out now, not after the full hold.
     if (!state.agents.length && !attended) {
@@ -251,6 +264,7 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
       display: display.text,
       warnings: display.warnings,
       expires_at: request.expires_at,
+      ...(request.unread ? { unread: true } : {}),
     });
     requests.set(request.id, request);
     if (s.state !== "ended") setState(s, "needs_input");
@@ -278,7 +292,7 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
       expires_at: r.expires_at,
       decided_by: r.decided_by,
       untrusted: untrustedOf(r),
-      ...(r.status === "pending" && r.approver === "human" ? { approval_url: approvalUrl(r) } : {}),
+      ...(r.status === "pending" && r.approver === "human" && !r.unread ? { approval_url: approvalUrl(r) } : {}),
     };
   }
 
@@ -318,6 +332,7 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     const { request: r, error } = pendingRequest(id);
     if (error) return error;
     if (r.kind === "question") return { status: "refused", message: "this is a question: use answer_question" };
+    if (r.unread) return { status: "refused", message: "Part of this can't be shown to the person, so it can't be approved from their device. Deny it, or they can answer at the session's terminal. A shorter command with no secret written in it can be approved." };
 
     if (signature) {
       const check = verifyApproval(r.doc, signature, state.keys);
@@ -384,7 +399,7 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     const r = requests.get(id);
     if (r?.status === "pending") {
       r.onDecision = null;
-      settle(r, "cancelled", { type: "system", name: "session stopped waiting" }, null);
+      settle(r, "cancelled", { type: "system", name: "the hook's connection closed with no answer" }, null);
     }
   }
 

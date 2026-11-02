@@ -69,6 +69,12 @@ const portOf = () => Number(process.env.SAYSO_PORT ?? readJson(paths.config, {})
 const claudeConfigDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude");
 const claudeSettingsPath = () => path.join(claudeConfigDir(), "settings.json");
 const MANAGED_SETTINGS = "/etc/claude-code/managed-settings.json";
+// The gate's --disable-sigusr1 needs this. An older Node refuses the flag, and every call is blocked.
+const NODE_NEEDED = "sayso needs Node 22.14 or newer";
+const nodeIsNewEnough = () => {
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  return major > 22 || (major === 22 && minor >= 14);
+};
 // The version the hook facts were measured on, and so the oldest known to block on a hook failure.
 const MEASURED_CLAUDE = [2, 1, 303];
 
@@ -105,7 +111,7 @@ async function ensureDaemon(root = appRoot) {
   } catch {}
   // systemd owns a hardened daemon. One started here could not bind its port.
   if (isHardened()) return false;
-  const child = spawn(process.execPath, [path.join(root, "src", "server.mjs")], { detached: true, stdio: "ignore", env: process.env });
+  const child = spawn(process.execPath, ["--disable-sigusr1", path.join(root, "src", "server.mjs")], { detached: true, stdio: "ignore", env: process.env });
   child.unref();
   for (let i = 0; i < 60; i++) {
     await new Promise((r) => setTimeout(r, 50));
@@ -314,8 +320,7 @@ async function mcpBridge() {
 async function doctor() {
   const checks = [];
   const check = (ok, what, fix) => checks.push({ ok, what, fix });
-  const nodeMajor = Number(process.versions.node.split(".")[0]);
-  check(nodeMajor >= 20, `node ${process.versions.node}`, "sayso needs Node 20 or newer");
+  check(nodeIsNewEnough(), `node ${process.versions.node}`, NODE_NEEDED);
   const claude = spawnSync("claude", ["--version"], { encoding: "utf8" });
   check(claude.status === 0, `claude ${claude.stdout?.trim() ?? "not found"}`, "install Claude Code");
   const claudeVersion = (/(\d+)\.(\d+)\.(\d+)/.exec(claude.stdout ?? "") ?? []).slice(1).map(Number);
@@ -324,11 +329,13 @@ async function doctor() {
   const settings = readJson(claudeSettingsPath(), {});
   const hasOurs = (table) => Object.values(table.hooks ?? {}).flat().some((g) => (g.hooks ?? []).some(isOurs));
   const inSettings = hasOurs(settings);
-  const asPlugin = Object.keys(settings.enabledPlugins ?? {}).some((p) => p.startsWith("sayso@"));
+  const switchedOff = (table) => Object.entries(table.enabledPlugins ?? {}).some(([name, on]) => name.startsWith("sayso@") && !on);
+  const asPlugin = Object.entries(settings.enabledPlugins ?? {}).some(([name, on]) => name.startsWith("sayso@") && on);
   const managed = isHardened() && hasOurs(readJson(MANAGED_SETTINGS, {}));
   check(inSettings || asPlugin || managed, managed ? `hooks in ${MANAGED_SETTINGS}` : inSettings ? `hooks in ${claudeSettingsPath()}` : asPlugin ? "installed as a plugin" : "hooks not installed", "run: sayso setup");
   if (!managed) {
-    check(true, `covers sessions under the config folder ${claudeConfigDir()}. A session under another CLAUDE_CONFIG_DIR has no gate, and neither does --bare, --safe-mode, --setting-sources without user, or an Agent SDK host with settingSources: []`);
+    check(true, `covers sessions under the config folder ${claudeConfigDir()}. A session under another CLAUDE_CONFIG_DIR has no gate, and neither does --bare, --safe-mode, --setting-sources without user, one started with CLAUDE_CODE_SIMPLE or CLAUDE_CODE_SAFE_MODE set, or an Agent SDK host with settingSources: []`);
+    if (switchedOff(settings)) check(false, `${claudeSettingsPath()} switches the sayso plugin off, so the gate is off on that route`, "run: claude plugin enable sayso@sayso");
     if (settings.disableAllHooks) check(false, `${claudeSettingsPath()} sets disableAllHooks, so the gate is off`, "remove it");
     for (let dir = process.cwd(), last = ""; dir !== last; last = dir, dir = path.dirname(dir)) {
       if (dir === homedir()) continue;
@@ -336,8 +343,12 @@ async function doctor() {
         const file = path.join(dir, ".claude", name);
         const project = readJson(file, {});
         if (project.disableAllHooks) check(false, `${file} sets disableAllHooks, so sessions in this folder have no gate`, "remove it, and don't trust the repository that shipped it");
+        if (switchedOff(project)) check(false, `${file} switches the sayso plugin off, so sessions in this folder have no gate on that route`, "remove it, and don't trust the repository that shipped it");
+        if (project.hooks) check(false, `${file} adds hooks of its own. They run as you in any session started here, so they could remove the gate`, "read them before running a session in this folder");
         const envNames = Object.keys(project.env ?? {});
-        if (envNames.length) check(false, `${file} sets env (${envNames.join(", ")}). The gate clears its own environment, but CLAUDE_CODE_SHELL_PREFIX here would still stop it from running`, "read it before running a session in this folder");
+        const beforeUs = envNames.filter((name) => /^(?:LD|DYLD)_/.test(name));
+        if (beforeUs.length) check(false, `${file} sets ${beforeUs.join(", ")}. The system's loader acts on that before any code of sayso's runs, so on Linux this folder can stop the gate`, "don't run a session in this folder. sudo sayso harden clears these");
+        if (envNames.length) check(false, `${file} sets env (${envNames.join(", ")}). The gate starts with no shell and clears its own environment, so the rest don't reach it, but they reach everything else a session here runs`, "read it before running a session in this folder");
       }
     }
   }
@@ -357,6 +368,7 @@ async function doctor() {
   }
   const policy = loadPolicy(paths.policy);
   check(true, `policy: ${policy.preset}`);
+  if (policy.trust_tools.length) check(true, `the policy trusts these tools by name: ${policy.trust_tools.join(", ")}. Their names no longer hold them, and only the arguments sayso can read still do`);
   for (const note of policy.notes) check(false, `policy note: ${note}`, "edit policy.json");
   const keys = readJson(paths.keys, []);
   check(keys.length > 0, keys.length ? `${keys.length} paired device(s)` : "no paired device, so human-only requests can be answered only at a terminal dialog", "run: sayso pair");
@@ -374,6 +386,8 @@ async function setup() {
   fs.mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
   const root = copyApp();
   const settingsFile = flag("plugin") ? null : installHooks(root);
+  // A plugin's hooks can't carry this path, and it beats guessing among folders any process of this user can write to.
+  if (flag("plugin")) fs.writeFileSync(path.join(paths.dir, "node-path"), `${process.execPath}\n`, { mode: 0o600 });
   const link = linkCli(root);
   const up = await ensureDaemon(root);
   const out = { settings: settingsFile, cli: link, daemon: up, port: portOf() };
@@ -398,7 +412,7 @@ async function setup() {
 }
 
 function refuseSetupIfUnsupported() {
-  if (Number(process.versions.node.split(".")[0]) < 20) die("sayso needs Node 20 or newer");
+  if (!nodeIsNewEnough()) die(NODE_NEEDED);
   if (process.platform === "win32") die("sayso does not support Windows yet");
 }
 
@@ -486,7 +500,7 @@ Environment=SAYSO_HOME=${HARDENED_HOME}
 Environment=SAYSO_SOCK=${HARDENED_SOCK}
 RuntimeDirectory=sayso
 RuntimeDirectoryMode=0755
-ExecStart=${nodePath} ${lib}/src/server.mjs
+ExecStart=${nodePath} --disable-sigusr1 ${lib}/src/server.mjs
 Restart=always
 RestartSec=1
 NoNewPrivileges=true
