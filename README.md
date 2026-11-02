@@ -15,7 +15,7 @@ get around it, and [here is where it stops](#where-it-stops).
 ![A Claude Code session asks to run rm -rf data. The agent is told, says it can't approve that, and sends a link. The person holds to approve on their phone and gets a code. The agent passes the code back, and the session runs the command.](assets/demo.gif)
 
 That is one real take with a real Claude Code session and a real model as the agent. The session's model and the person's
-taps are scripted, in a phone-sized browser, so the take is repeatable. `npm run demo` records it again.
+taps are scripted, in a phone-sized browser, so the take is repeatable, and Claude Code's mascot is blanked from its header. `npm run demo` records it again.
 
 ## Install
 

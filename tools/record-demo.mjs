@@ -94,7 +94,8 @@ let last = "";
 let recording = true;
 const frames = (async () => {
   while (recording) {
-    const left = tmux("capture-pane", "-e", "-p", "-t", "t").stdout.split("\n");
+    // Blanks the mascot in Claude Code's header, because a logo here would read as an endorsement nobody gave.
+    const left = tmux("capture-pane", "-e", "-p", "-t", "t").stdout.split("\n").map((line, row) => (row < 6 ? line.replace(/^(?:\x1b\[[0-9;]*m|[ \u2580-\u259f])*[ \u2580-\u259f]/, (lead) => `\x1b[0m${" ".repeat(lead.replace(/\x1b\[[0-9;]*m/g, "").length)}`) : line));
     const shown = panel.slice(-(ROWS - 1));
     let frame = "";
     for (let row = 0; row < ROWS; row++) {
