@@ -1,13 +1,16 @@
 // Drives the real Claude Code binary through a real install. The model is scripted, everything else is the product.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { describe, test as nodeTest } from "node:test";
+import { fileURLToPath } from "node:url";
 import { Rig, sleep, waitUntil } from "./harness/rig.mjs";
 
 // node applies --test-timeout to whole files as well, so the bound on one test goes here.
 const test = (name, fn) => nodeTest(name, { timeout: 150000 }, fn);
+const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "sayso.mjs");
 const RM = { tool: "Bash", input: { command: "rm -rf victim", description: "delete the folder" } };
 const FINISH = { text: "finished" };
 
@@ -308,6 +311,34 @@ describe("what an agent sees and how it is told", () => {
       await rig.tool("deny", { request_id: request.id });
       await session.done;
       await waitUntil(async () => !(await rig.tool("list_sessions")).sessions.some((s) => s.session_id === request.session_id), 8000, "the session to end");
+    }));
+
+  test("the stdio bridge lists the tools and calls them", () =>
+    withRig({}, [FINISH], async (rig) => {
+      const bridge = spawn(process.execPath, [CLI, "mcp"], { env: rig.env({ SAYSO_TOKEN: rig.token }), stdio: ["pipe", "pipe", "inherit"] });
+      let out = "";
+      bridge.stdout.on("data", (d) => (out += d));
+      const ask = (id, method, params = {}) => bridge.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      ask(1, "tools/list");
+      ask(2, "tools/call", { name: "list_requests", arguments: {} });
+      await waitUntil(() => out.trim().split("\n").length >= 2, 5000, "both answers");
+      const [tools, call] = out.trim().split("\n").map((l) => JSON.parse(l));
+      assert.ok(tools.result.tools.some((t) => t.name === "approve"));
+      assert.deepEqual(JSON.parse(call.result.content[0].text).requests, []);
+      bridge.stdin.end();
+      await new Promise((r) => bridge.on("exit", r));
+    }));
+
+  test("a notify command gets each event as JSON on stdin", () =>
+    withRig({}, [RM, FINISH], async (rig) => {
+      const file = path.join(rig.root, "told.jsonl");
+      rig.cli("notify", "add", "command", "--", "sh", "-c", `cat >> ${file}`);
+      const session = rig.headless();
+      const request = await rig.nextRequest();
+      await waitUntil(() => fs.existsSync(file) && fs.readFileSync(file, "utf8").includes(request.id), 5000, "the command");
+      assert.match(fs.readFileSync(file, "utf8"), /request\.opened/);
+      await rig.tool("deny", { request_id: request.id });
+      await session.done;
     }));
 
   test("wait_for_event returns the moment a request opens", () =>

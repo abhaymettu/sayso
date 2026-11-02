@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { Rig, CLAUDE, sleep } from "./harness/rig.mjs";
+import { Rig, CLAUDE, sleep, waitUntil } from "./harness/rig.mjs";
 
 const model = process.argv[process.argv.indexOf("--model") + 1] && process.argv.includes("--model") ? process.argv[process.argv.indexOf("--model") + 1] : "claude-haiku-5-5";
 
@@ -59,6 +59,25 @@ const check = (name, ok, detail) => {
   await session.done;
   check("the command ran only after the person's signature", rig.destroyed());
   console.log(`      cost: ${first.cost_usd} + ${second.cost_usd} USD, model ${model}`);
+  await rig.close();
+}
+
+{
+  const rig = new Rig();
+  await rig.install();
+  await rig.model([{ tool: "Bash", input: { command: "rm -rf victim", description: "delete the folder" } }, { text: "finished" }]);
+  const told = path.join(rig.root, "told.jsonl");
+  rig.cli("notify", "add", "command", "--", "sh", "-c", `cat >> ${told}`);
+  const session = rig.headless();
+  await waitUntil(() => fs.existsSync(told) && fs.readFileSync(told, "utf8").includes("request.opened"), 30000, "the tap on the shoulder");
+  const event = fs.readFileSync(told, "utf8").split("\n").find((l) => l.includes("request.opened"));
+  const woken = runAgent(rig, `You are my personal agent, connected to my Claude Code sessions through sayso. sayso just sent you this event, and it is all you know:\n${event}\nDeal with it, following the rules sayso gives you. Then tell me in two sentences what you did and what you need from me.`);
+  check("woken only by sayso's event, the agent acted on it", woken.calls.some((c) => c.tool === "approve" || c.tool === "list_requests"), woken.calls.map((c) => c.tool).join(", "));
+  check("and brought its person the approval link", /https:\/\/\S+#r=[A-Za-z0-9_-]+/.test(woken.text), woken.text.slice(0, 200));
+  check("and the command is still held", !rig.destroyed());
+  const { requests } = await rig.tool("list_requests");
+  await rig.tool("deny", { request_id: requests[0].id });
+  await session.done;
   await rig.close();
 }
 
