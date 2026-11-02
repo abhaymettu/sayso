@@ -57,7 +57,7 @@ export class Tui {
       .map(([k, v]) => `export ${k}=${JSON.stringify(v)}`)
       .join("\n");
     fs.writeFileSync(script, `#!/bin/sh\n${exports}\ncd ${JSON.stringify(box.cwd)}\nexec ${JSON.stringify(CLAUDE)} ${args.map((a) => JSON.stringify(a)).join(" ")}\n`, { mode: 0o755 });
-    execFileSync("tmux", ["-L", this.socket, "-f", "/dev/null", "new-session", "-d", "-s", "t", "-x", "120", "-y", "40", script], { env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, TERM: "xterm-256color" } });
+    execFileSync("tmux", ["-L", this.socket, "-f", "/dev/null", "new-session", "-d", "-s", "t", "-x", "120", "-y", "40", script], { env: { PATH: env.PATH, HOME: env.HOME, TMPDIR: env.TMPDIR, TERM: "xterm-256color" } });
   }
   screen() {
     const r = spawnSync("tmux", ["-L", this.socket, "capture-pane", "-p", "-t", "t"], { encoding: "utf8" });

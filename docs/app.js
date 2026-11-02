@@ -30,8 +30,15 @@ const WARNINGS = new Map([
 ]);
 
 // The daemon already marks these, but session and folder names reach the page unmarked, and the page is what the person trusts.
-const HIDDEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f­؜​-‏ -‮⁠-⁯﻿\u{e0000}-\u{e007f}]/gu;
-const reveal = (text) => text.replace(HIDDEN, (ch) => `⟦U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}⟧`);
+const isHidden = (cp) =>
+  cp < 0x09 || (cp > 0x0a && cp < 0x20) || (cp >= 0x7f && cp < 0xa0) || cp === 0xad || cp === 0x61c ||
+  (cp >= 0x200b && cp <= 0x200f) || (cp >= 0x2028 && cp <= 0x202e) || (cp >= 0x2060 && cp <= 0x206f) ||
+  cp === 0xfeff || (cp >= 0xe0000 && cp <= 0xe007f);
+const reveal = (text) =>
+  Array.from(text, (ch) => {
+    const cp = ch.codePointAt(0);
+    return isHidden(cp) ? `⟦U+${cp.toString(16).toUpperCase().padStart(4, "0")}⟧` : ch;
+  }).join("");
 
 const b64urlToBytes = (text) => Uint8Array.from(atob(text.replaceAll("-", "+").replaceAll("_", "/")), (ch) => ch.charCodeAt(0));
 const bytesToB64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
@@ -39,7 +46,8 @@ const signingBytes = (doc) => new TextEncoder().encode(SIGNING_CONTEXT + doc);
 const encodeDoc = (fields) => bytesToB64url(new TextEncoder().encode(JSON.stringify(fields)));
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-const cloneRaw = (templateId) => document.getElementById(templateId).content.firstElementChild.cloneNode(true);
+// importNode, not cloneNode: a clone stays owned by the template's inert document, whose animation timeline never advances.
+const cloneRaw = (templateId) => document.importNode(document.getElementById(templateId).content.firstElementChild, true);
 
 function clone(templateId) {
   const root = cloneRaw(templateId);
@@ -383,12 +391,12 @@ function mountSheet({ doc, request, signer, lead, headingLevel, signedPanel }) {
     },
   };
 
+  state.show(signer.phase);
   const stopCountdown = startCountdown(field(sheet, "countdown"), request.expiresAt, () => {
     field(sheet, "announce").textContent = "This request expired.";
     if (state.phase === "ready" || state.phase === "declined") state.show("expired");
     if (state.phase === "signed") state.markStale?.();
   });
-  state.show(signer.phase);
   return { sheet, state, stop: stopCountdown };
 }
 

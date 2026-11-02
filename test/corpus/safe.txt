@@ -241,10 +241,8 @@ mcp list
 watch -n 1 ls
 parallel echo ::: a b
 rm -rf /tmp/build-123
-rm -rf /private/tmp/claude-501/scratch/x
+rm -rf /private/tmp/build-output/x
 rm -f /tmp/x*.png
-S=.scratch/smoke; rm -rf $S
-rm -rf scratch/run1
 rm -rf "$TMPDIR/build"
 D=$(mktemp -d); rm -rf "$D"
 D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
@@ -253,7 +251,6 @@ find . -name "*.pyc" -delete
 python3 - <<'EOF'\nimport subprocess\nsubprocess.run(["git", "status"])\nEOF
 start() { tool start $1 | grep x; }; start a
 rm -f dist/*.map
-rm -rf .playwright-mcp/*.png
 T=$(command -v jq); "$T" . a.json
 for d in dist build; do rm -rf $d; done
 for c in "npm test" "npm run lint"; do eval "$c"; done

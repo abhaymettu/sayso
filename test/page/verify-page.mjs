@@ -37,6 +37,7 @@ const requestUrl = (base, doc) => `${base}#r=${doc}`;
 const keysOf = (...pairings) => pairings.map((p) => ({ id: p.id, public_key: p.public_key, name: "test" }));
 
 async function hold(page, ms) {
+  await page.locator(".hold").scrollIntoViewIfNeeded();
   const box = await page.locator(".hold").boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -130,6 +131,34 @@ const TESTS = {
     assert.equal(verifyApproval(altered, code, keysOf(pairing)).ok, false, "the signature must not fit an altered request");
     assert.ok((await page.locator("#app").innerText()).includes("Send this code back to your agent. It only works for this one request."));
     await assertNoOverflow(page, "signed");
+  },
+
+  async "a real finger: a tap does nothing, a touch held to the end signs"(_ctx, base, engine, browser) {
+    if (engine !== "chromium") return;
+    const ctx = await browser.newContext({ ...PHONE, hasTouch: true, isMobile: true });
+    try {
+      const pairing = generatePairing();
+      const page = await ctx.newPage();
+      await page.goto(pairUrl(base, pairing));
+      await page.getByRole("heading", { name: "This device is paired" }).waitFor();
+      const doc = fixtureDoc();
+      await page.goto("about:blank");
+      await page.goto(requestUrl(base, doc));
+      await page.locator(".hold").waitFor();
+      await page.locator(".hold").tap();
+      await page.waitForTimeout(1000);
+      await noCodeAppeared(page);
+      const box = await page.locator(".hold").boundingBox();
+      const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      const cdp = await ctx.newCDPSession(page);
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+      await page.waitForTimeout(950);
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      const code = (await page.locator(".code").textContent()).trim();
+      assert.equal(verifyApproval(doc, code, keysOf(pairing)).ok, true);
+    } finally {
+      await ctx.close();
+    }
   },
 
   async "dragging off the button cancels the hold"(ctx, base) {
@@ -457,7 +486,6 @@ const TESTS = {
 
   async "inside another page's frame it refuses to pair or sign"(ctx, base) {
     const page = await ctx.newPage();
-    await page.goto(base.replace("/sayso/", "/nope"));
     await page.setContent(`<iframe src="${requestUrl(base, fixtureDoc())}" width="390" height="600"></iframe>`);
     const frame = page.frameLocator("iframe");
     await frame.getByRole("heading", { name: "Open this page in its own tab" }).waitFor();
@@ -469,6 +497,7 @@ const TESTS = {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto(base);
     await page.locator(".hold").waitFor();
+    await page.locator(".hold").scrollIntoViewIfNeeded();
     const box = await page.locator(".hold").boundingBox();
     await page.mouse.move(box.x + 20, box.y + 20);
     await page.mouse.down();
@@ -508,7 +537,7 @@ const TESTS = {
       ["--ok", "--card", 3],
       ["--caution", "--bg", 3],
       ["--tint-fill", "--tint-soft", 3],
-      ["--stop", "--ok", 1.15],
+      ["--stop", "--ok", 1.5],
     ];
     for (const colorScheme of ["light", "dark"]) {
       await page.emulateMedia({ colorScheme });
@@ -590,7 +619,7 @@ async function runAll(engines) {
       const ctx = await browser.newContext(PHONE);
       ctx.setDefaultTimeout(6000);
       try {
-        await test(ctx, base, engine);
+        await test(ctx, base, engine, browser);
         console.log(`PASS ${name}`);
       } catch (error) {
         failed++;

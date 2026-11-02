@@ -357,6 +357,10 @@ export async function startDaemon(paths = statePaths()) {
   });
 
   await new Promise((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(config.port, "127.0.0.1", resolve);
+  });
+  await new Promise((resolve, reject) => {
     hookServer.once("error", reject);
     // Hardened, the daemon runs as another user, so the session's user needs the socket. It still cannot answer on it.
     const bind = () => hookServer.listen(paths.sock, () => {
@@ -376,10 +380,6 @@ export async function startDaemon(paths = statePaths()) {
     });
   });
 
-  await new Promise((resolve, reject) => {
-    httpServer.once("error", reject);
-    httpServer.listen(config.port, "127.0.0.1", resolve);
-  });
   fs.writeFileSync(paths.pid, String(process.pid), { mode: 0o600 });
   log(`started pid ${process.pid} port ${httpServer.address().port}`);
 

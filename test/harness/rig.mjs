@@ -14,7 +14,24 @@ const CLI = path.join(ROOT, "bin", "sayso.mjs");
 export const CLAUDE = process.env.CLAUDE_BIN || "claude";
 export { sleep };
 
-let nextPort = 17000 + (process.pid % 2000);
+const openRigs = new Set();
+process.on("exit", () => {
+  for (const rig of openRigs) {
+    try {
+      process.kill(rig.daemonPid());
+    } catch {}
+    rig.terminal?.kill();
+  }
+});
+
+function freePort() {
+  return new Promise((resolve) => {
+    const probe = net.createServer().listen(0, "127.0.0.1", () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
 
 export async function waitUntil(fn, ms = 15000, label = "condition") {
   const end = Date.now() + ms;
@@ -31,11 +48,14 @@ export class Rig {
     // Short path: a Unix socket path has a 104 byte limit on macOS.
     this.root = fs.realpathSync(fs.mkdtempSync(path.join("/tmp", "sy-")));
     this.name = name;
-    this.home = path.join(this.root, "s");
-    this.config = path.join(this.root, "c");
+    // A fake HOME with the real layout. The gate is what stands between these tests and `rm -rf ~`, so if it ever
+    // fails, the damage lands in this folder.
+    this.fakeHome = path.join(this.root, "h");
+    this.home = path.join(this.fakeHome, ".sayso");
+    this.config = path.join(this.fakeHome, ".claude");
     this.cwd = path.join(this.root, "w");
     this.bin = path.join(this.root, "b");
-    this.port = nextPort++;
+    this.port = 0;
     fs.mkdirSync(this.config, { recursive: true });
     fs.mkdirSync(path.join(this.cwd, "victim"), { recursive: true });
     fs.writeFileSync(path.join(this.cwd, "victim", "file.txt"), "keep me");
@@ -46,7 +66,7 @@ export class Rig {
   env(extra = {}) {
     return {
       PATH: process.env.PATH,
-      HOME: process.env.HOME,
+      HOME: this.fakeHome,
       TMPDIR: process.env.TMPDIR,
       SAYSO_HOME: this.home,
       SAYSO_PORT: String(this.port),
@@ -63,6 +83,8 @@ export class Rig {
   }
 
   async install({ policy, agent = "test-agent", pair = true } = {}) {
+    this.port = await freePort();
+    openRigs.add(this);
     if (policy) {
       fs.mkdirSync(this.home, { recursive: true, mode: 0o700 });
       fs.writeFileSync(path.join(this.home, "policy.json"), JSON.stringify(policy));
@@ -167,6 +189,7 @@ export class Rig {
     this.terminal?.kill();
     this.scripted?.close();
     await this.askDaemon({ op: "shutdown" }).catch(() => {});
+    openRigs.delete(this);
     await sleep(40);
     fs.rmSync(this.root, { recursive: true, force: true });
   }

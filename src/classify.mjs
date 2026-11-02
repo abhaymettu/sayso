@@ -1244,7 +1244,7 @@ const WRITE_TARGETS = {
 
 // Per-command rules. Each takes (args, io, st, key) and only flags.
 
-const REBUILDABLE = new Set(['node_modules', 'dist', 'build', '.next', 'target', '__pycache__', '.cache', 'coverage', '.turbo', 'out', '.pytest_cache', '.venv', 'venv', 'tmp', 'scratch', '.scratch', '.playwright-mcp']);
+const REBUILDABLE = new Set(['node_modules', 'dist', 'build', '.next', 'target', '__pycache__', '.cache', 'coverage', '.turbo', 'out', '.pytest_cache', '.venv', 'venv', 'tmp']);
 const OS_SCRATCH_CHILD = /^\/(?:tmp|var\/tmp|var\/folders)\/./i;
 const FIND_CLEANUP_NAME = /^(?:\*\.py[co]|\.DS_Store)$/;
 
@@ -1260,9 +1260,9 @@ function isRebuildable(arg) {
   return false;
 }
 
-/** Children of the OS temp roots go away on their own. Normalizing first means /tmp/../etc is not one of them. */
+/** Children of the OS temp roots go away on their own. Only when written as such: a relative path in a project that happens to live under /tmp is still that project. Normalizing first means /tmp/../etc is not one of them. */
 function isOsScratch(arg, st) {
-  return !arg.text.includes('$') && OS_SCRATCH_CHILD.test(deleteRootOf(arg, st));
+  return arg.text[0] === '/' && !arg.text.includes('$') && OS_SCRATCH_CHILD.test(deleteRootOf(arg, st));
 }
 
 function deleteRootOf(arg, st) {

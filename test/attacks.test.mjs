@@ -199,7 +199,7 @@ describe("a session trying to approve itself", () => {
       {},
       (messages) => {
         const n = messages.reduce((c, m) => c + (Array.isArray(m.content) ? m.content.filter((x) => x.type === "tool_result").length : 0), 0);
-        return n === 0 ? { tool: "Write", input: { file_path: path.join(os.homedir(), ".sayso", "keys.json"), content: "[]" } } : FINISH;
+        return n === 0 ? { tool: "Write", input: { file_path: "~/.sayso/keys.json", content: "[]" } } : FINISH;
       },
       async (rig) => {
         const session = rig.headless();

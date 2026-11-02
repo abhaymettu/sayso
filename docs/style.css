@@ -18,7 +18,7 @@
 
   --stop: #b0001f;
   --on-stop: #ffffff;
-  --ok: #0a6a31;
+  --ok: #12893f;
   --caution: #8a5a00;
 
   --radius: 1rem;
@@ -46,7 +46,7 @@
 
     --stop: #ff8a80;
     --on-stop: #1d0000;
-    --ok: #63dd8a;
+    --ok: #7ff0a4;
     --caution: #ffc94d;
   }
 }
@@ -381,3 +381,8 @@ dl.rows dd { overflow-wrap: anywhere; min-width: 0; }
 @media (prefers-reduced-transparency: reduce) {
   .actions { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
+
+.warning { border: 2px solid var(--warn-ink); }
+
+body { overflow-wrap: anywhere; }
+.warning > div, .verdict > span { min-width: 0; }
