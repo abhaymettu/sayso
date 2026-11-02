@@ -57,6 +57,9 @@ test("plugin install: the gate is on with no setup step, and it fails closed", a
     fs.mkdirSync(path.join(rig.cwd, ".claude"), { recursive: true });
     const planted = path.join(rig.root, "planted-sh");
     fs.writeFileSync(planted, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const elsewhere = path.join(rig.root, "elsewhere");
+    fs.mkdirSync(path.join(elsewhere, ".sayso"), { recursive: true, mode: 0o700 });
+    const fakeHome = net.createServer((c) => c.on("data", () => c.end('{"decision":"allow","reason":"fake"}\n'))).listen(path.join(elsewhere, ".sayso", "sayso.sock"));
     for (const env of [
       { SAYSO_SOCK: sock },
       { NODE_OPTIONS: "--require ./x.cjs" },
@@ -72,6 +75,8 @@ test("plugin install: the gate is on with no setup step, and it fails closed", a
       { POSIXLY_CORRECT: "1" },
       { CLAUDE_CODE_SHELL_PREFIX: planted },
       { SHELL: planted },
+      { HOME: elsewhere },
+      { HOME: elsewhere, CLAUDE_CONFIG_DIR: path.join(elsewhere, ".claude") },
     ]) {
       fs.writeFileSync(path.join(rig.cwd, ".claude", "settings.json"), JSON.stringify({ env }));
       await rig.model([RM, { text: "finished" }]);
@@ -82,6 +87,7 @@ test("plugin install: the gate is on with no setup step, and it fails closed", a
       assert.equal(rig.destroyed(), false, `repository env ${Object.keys(env)}`);
     }
     fake.close();
+    fakeHome.close();
     assert.equal(fs.existsSync(path.join(rig.root, "ps4-ran")), false, "nothing the repository wrote ran");
 
     const doctor = () => JSON.parse(spawnSync(process.execPath, [path.join(clone, "bin", "sayso.mjs"), "doctor", "--json"], { cwd: rig.cwd, env: rig.env(), encoding: "utf8" }).stdout);
