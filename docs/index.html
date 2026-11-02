@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f2f2f7">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="sayso">
+<meta name="description" content="Let your own AI agent answer your Claude Code sessions, and keep the risky calls for yourself.">
+<title>sayso</title>
+<link rel="icon" type="image/svg+xml" href="mark.svg" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/svg+xml" href="mark-dark.svg" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-stop" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M8.2 2h7.6c.5 0 1 .2 1.4.6l4.2 4.2c.4.4.6.9.6 1.4v7.6c0 .5-.2 1-.6 1.4l-4.2 4.2c-.4.4-.9.6-1.4.6H8.2c-.5 0-1-.2-1.4-.6l-4.2-4.2c-.4-.4-.6-.9-.6-1.4V8.2c0-.5.2-1 .6-1.4l4.2-4.2c.4-.4.9-.6 1.4-.6ZM11 7v7h2V7h-2Zm1 8.6a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8Z"/></symbol>
+  <symbol id="i-caution" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M12 2.5c.7 0 1.3.4 1.7 1l8.4 15c.8 1.3-.2 3-1.7 3H3.6c-1.5 0-2.5-1.7-1.7-3l8.4-15c.4-.6 1-1 1.7-1ZM11 9v6h2V9h-2Zm1 7.2a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6Z"/></symbol>
+  <symbol id="i-ask" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9.2 9.4a2.9 2.9 0 1 1 4.5 2.4c-1 .7-1.7 1.2-1.7 2.4"/><circle cx="12" cy="17.2" r="1.25" fill="currentColor"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm-1.4 15.4 6.9-6.9-1.5-1.5-5.4 5.4-2.6-2.6L7 12.3l3.6 5.1Z"/></symbol>
+  <symbol id="i-fail" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M8.2 2h7.6c.5 0 1 .2 1.4.6l4.2 4.2c.4.4.6.9.6 1.4v7.6c0 .5-.2 1-.6 1.4l-4.2 4.2c-.4.4-.9.6-1.4.6H8.2c-.5 0-1-.2-1.4-.6l-4.2-4.2c-.4-.4-.6-.9-.6-1.4V8.2c0-.5.2-1 .6-1.4l4.2-4.2c.4-.4.9-.6 1.4-.6ZM12 10.5 8.9 7.4 7.4 8.9l3.1 3.1-3.1 3.1 1.5 1.5 3.1-3.1 3.1 3.1 1.5-1.5-3.1-3.1 3.1-3.1-1.5-1.5-3.1 3.1Z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M15.5 4.8c-.3-.8-1.1-1.3-2-1.3H6c-1.4 0-2.5 1.1-2.5 2.5v7.5c0 .9.5 1.7 1.3 2"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 14.5V3M7.8 7 12 2.8 16.2 7M8 10.5H6.5A2.5 2.5 0 0 0 4 13v6a2.5 2.5 0 0 0 2.5 2.5h11A2.5 2.5 0 0 0 20 19v-6a2.5 2.5 0 0 0-2.5-2.5H16"/></symbol>
+</svg>
+
+<main id="app"></main>
+
+<noscript><p class="noscript">sayso needs JavaScript to read a request and sign your answer. Nothing is sent anywhere.</p></noscript>
+
+<footer class="foot">
+  <p>This page's security policy allows no network connections, so it cannot send your key or your requests anywhere.</p>
+  <p><a href="https://github.com/abhaymettu/sayso">Source on GitHub</a></p>
+</footer>
+
+<template id="t-brand">
+  <div class="brand">
+    <picture>
+      <source srcset="mark-dark.svg" media="(prefers-color-scheme: dark)">
+      <img src="mark.svg" alt="" width="28" height="28">
+    </picture>
+    <span>sayso</span>
+  </div>
+</template>
+
+<template id="t-landing">
+  <article class="enter">
+    <div data-slot="brand"></div>
+    <h1 class="display">Let your agent answer Claude Code. Keep the risky calls for yourself.</h1>
+    <div class="prose">
+      <p>sayso lets your own AI agent see your Claude Code sessions and answer them while you are away. When a session wants to do something risky, like deleting files, it stops and waits for you.</p>
+      <p>You read the exact command on your phone and hold to approve. That signs a code with a key only your device has. Your agent can carry the code, but it cannot make one or change what it approves.</p>
+    </div>
+    <section class="demo" aria-labelledby="demo-title">
+      <h2 id="demo-title">Try it</h2>
+      <p class="demo-intro">This request is made up. The signature is real, made by a key that exists only while this page is open.</p>
+      <div data-slot="sheet"></div>
+    </section>
+    <a class="btn secondary" href="https://github.com/abhaymettu/sayso">Read the code and install it</a>
+  </article>
+</template>
+
+<template id="t-sheet">
+  <section class="sheet">
+    <div class="sheet-bar">
+      <div data-slot="lead"></div>
+      <p class="countdown" role="timer" data-field="countdown"></p>
+    </div>
+    <div class="risk" role="heading">
+      <svg class="risk-icon" aria-hidden="true" width="30" height="30"><use data-field="risk-icon" href="#i-caution"></use></svg>
+      <span data-field="risk"></span>
+    </div>
+    <div class="warning" data-slot="warnings" hidden>
+      <svg aria-hidden="true" width="24" height="24"><use href="#i-caution"></use></svg>
+      <div>
+        <ul data-field="warnings"></ul>
+        <p>Read it character by character before you approve. Marks like <span class="nowrap">⟦U+202E⟧</span> show where hidden characters sit.</p>
+      </div>
+    </div>
+    <figure class="command-card">
+      <figcaption data-field="tool"></figcaption>
+      <pre class="command" data-field="display"></pre>
+    </figure>
+    <dl class="rows">
+      <div><dt>Session</dt><dd data-field="session"></dd></div>
+      <div><dt>Folder</dt><dd data-field="cwd"></dd></div>
+    </dl>
+    <section class="reasons" data-slot="why" hidden>
+      <h3>Why it stopped</h3>
+      <ul class="rows" data-field="why"></ul>
+    </section>
+    <div class="actions" data-slot="actions"></div>
+    <p class="sr-only" role="status" data-field="announce"></p>
+  </section>
+</template>
+
+<template id="t-ready">
+  <div class="enter-fade">
+    <button class="hold" type="button" aria-describedby="hold-hint">
+      <span class="hold-label">Hold to approve</span>
+      <span class="hold-fill" aria-hidden="true"><span class="hold-label">Hold to approve</span></span>
+    </button>
+    <p class="hint" id="hold-hint">Press and keep holding until it fills. A tap does nothing.</p>
+    <button class="btn quiet" type="button" data-action="decline">Say no</button>
+  </div>
+</template>
+
+<template id="t-declined">
+  <div class="panel enter-fade">
+    <p class="panel-title">Tell your agent no.</p>
+    <p class="panel-body">Nothing needs signing.</p>
+    <button class="btn quiet" type="button" data-action="undecline">I changed my mind</button>
+  </div>
+</template>
+
+<template id="t-expired">
+  <div class="enter-fade">
+    <button class="hold" type="button" disabled>
+      <span class="hold-label">Expired</span>
+    </button>
+    <p class="hint">This request expired, so it was not run. Your agent can ask again.</p>
+  </div>
+</template>
+
+<template id="t-signed">
+  <div class="signed enter">
+    <p class="signed-title"><svg aria-hidden="true" width="24" height="24"><use href="#i-check"></use></svg><span>Approved on this device</span></p>
+    <p class="code" tabindex="0" data-field="code"></p>
+    <button class="btn primary" type="button" data-action="copy">
+      <svg aria-hidden="true" width="22" height="22"><use href="#i-copy"></use></svg><span data-field="copy-label">Copy code</span>
+    </button>
+    <button class="btn secondary" type="button" data-action="share" hidden>
+      <svg aria-hidden="true" width="22" height="22"><use href="#i-share"></use></svg><span>Share</span>
+    </button>
+    <p class="hint" data-field="signed-note">Send this code back to your agent. It only works for this one request.</p>
+  </div>
+</template>
+
+<template id="t-demo-signed">
+  <div class="signed enter">
+    <p class="signed-title"><svg aria-hidden="true" width="24" height="24"><use href="#i-check"></use></svg><span>Approved. Your agent carries this code.</span></p>
+    <p class="code" tabindex="0" data-field="code"></p>
+    <div class="proof">
+      <h3>Now be the agent</h3>
+      <p class="hint">A compromised agent shows you one thing and asks to run another. Try it. The check below runs in your browser.</p>
+      <figure class="command-card">
+        <figcaption data-field="proof-caption"></figcaption>
+        <pre class="command" data-field="proof-command"></pre>
+      </figure>
+      <p class="verdict" role="status" data-field="verdict">
+        <svg aria-hidden="true" width="24" height="24"><use data-field="verdict-icon" href="#i-check"></use></svg>
+        <span><strong data-field="verdict-word"></strong> <span data-field="verdict-detail"></span></span>
+      </p>
+      <button class="btn primary" type="button" data-action="lie">Agent tries to lie</button>
+    </div>
+    <button class="btn quiet" type="button" data-action="again">Start over</button>
+  </div>
+</template>
+
+<template id="t-paired">
+  <article class="enter message">
+    <div data-slot="brand"></div>
+    <svg class="message-icon" aria-hidden="true" width="56" height="56"><use href="#i-check"></use></svg>
+    <h1 class="display" data-field="title"></h1>
+    <dl class="rows">
+      <div><dt>Key</dt><dd class="mono" data-field="id"></dd></div>
+      <div data-slot="name"><dt>Name</dt><dd data-field="name"></dd></div>
+    </dl>
+    <p class="prose-line" data-field="detail"></p>
+    <p class="hint">On iPhone, Safari may clear site data after a week without visits, and adding this page to your home screen avoids that. If the key is ever gone, run <code>sayso pair</code> again.</p>
+  </article>
+</template>
+
+<template id="t-message">
+  <article class="enter message">
+    <div data-slot="brand"></div>
+    <h1 class="display" data-field="title"></h1>
+    <p class="prose-line" data-field="detail"></p>
+  </article>
+</template>
+
+<template id="t-notice">
+  <div class="panel enter-fade">
+    <p class="panel-title" data-field="title"></p>
+    <p class="panel-body" data-field="detail"></p>
+  </div>
+</template>
+</body>
+</html>

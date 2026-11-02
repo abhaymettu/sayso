@@ -1,0 +1,5 @@
+node_modules/
+.scratch/
+.audit/
+*.log
+.DS_Store

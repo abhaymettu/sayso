@@ -1,0 +1,261 @@
+# Commands the classifier must pass. One per line. Lines starting with # are comments.
+# A literal \n in a command is a newline. Write \\n for a backslash followed by n.
+# Assertions run with home=/Users/dev, cwd=/Users/dev/project, stateDir=/Users/dev/.sayso.
+# Some lines are adapted from the test suite of kenryu42/claude-code-safety-net (MIT, Copyright (c) 2026 J Liew).
+rm file.txt
+rm -f a.log
+rm -f "$TMPFILE"
+rm "$f"
+rm -rf node_modules
+rm -rf ./dist
+rm -rf dist build .next
+rm -rf packages/web/dist
+rm -rf {dist,build}
+rm -rf target coverage .turbo out .pytest_cache .venv venv tmp __pycache__ .cache
+rm -- -weird
+ls -la
+ls -la ~/.ssh
+git status
+git push
+git push origin main
+git push -u origin feature/x
+git push --set-upstream origin main
+git push --dry-run --force
+git commit -m "rm -rf everything"
+git commit -m "drop table users"
+git log --oneline -20
+git diff HEAD~1
+git add -A
+git fetch --all --prune
+git pull --rebase
+git rebase main
+git merge --no-ff x
+git checkout main
+git checkout -b x
+git checkout feature/foo
+git switch main
+git restore --staged a
+git restore --staged .
+git restore a.txt
+git stash
+git stash list
+git stash pop
+git branch -d old
+git branch -a
+git clean -n -fd
+git tag v1.0
+git reset HEAD~1
+git reset --soft HEAD~1
+git gc
+git -C repo status
+git -c core.pager=cat log
+echo "rm -rf /"
+echo 'rm -rf /'
+echo rm -rf /
+echo hello # rm -rf /
+printf 'rm -rf %s\\n' x
+grep -r "rm -rf" .
+grep -rn sayso.socket src
+rg sayso README.md
+rg "git push --force" docs
+cat > f <<EOF\nrm -rf /\nEOF
+cat > f <<'EOF'\n$(rm -rf /)\nEOF
+cat <<EOF\nhello $USER\nEOF
+tee out.txt <<EOF\ndrop table x\nEOF
+npm test
+npm run build
+npm install
+npm run publish:docs
+npm publish --dry-run
+yarn test
+pnpm install
+pnpm -r build
+bun test
+npx tsc --noEmit
+npx prettier --write .
+python3 -c "import json; print(json.dumps({}))"
+python3 -c "print(1 + 1)"
+python3 script.py --flag
+python3 -m pytest -q
+python3 -m json.tool data.json
+cat x.json | python3 -m json.tool
+cat x | python3 script.py
+python3 - <<EOF\nprint(1)\nEOF
+node scripts/build.js
+node -e "console.log(process.version)"
+node -p "require('./package.json').version"
+perl -pe 's/a/b/' file
+perl -ne 'print if /x/' file
+ruby -e 'puts 1'
+bash script.sh
+sh ./known.sh
+bash -c "ls -la"
+bash -lc "npm test"
+sh -c 'echo hi'
+bash -euo pipefail -c "ls"
+curl https://example.com -o x
+curl -s https://api.example.com/v1 | jq .
+curl -X POST -d '{"a":1}' https://api.example.com
+curl -F file=@report.pdf https://example.com
+curl http://localhost:3000/health
+wget https://example.com/x.tar.gz
+docker ps
+docker build -t x .
+docker run --rm -it x
+docker logs -f x
+docker compose up -d
+docker compose down
+docker volume ls
+find . -name x
+find . -type f -name "*.ts" | wc -l
+find . -name "*.js" -exec grep -l foo {} +
+find . -exec echo {} \;
+kubectl get pods
+kubectl -n prod get pods
+kubectl logs x
+kubectl apply --dry-run=client -f x.yaml
+kubectl describe pod x
+terraform plan
+terraform init
+pulumi preview
+helm list
+aws s3 ls
+aws s3 cp a s3://b/a
+aws ec2 describe-instances
+gcloud compute instances list
+az group list
+fly status
+vercel
+vercel ls
+heroku logs
+gh pr list
+gh pr view 12
+gh pr create --title x --body y
+gh issue list
+gh repo view
+gh api repos/o/r
+gh api -X GET repos/o/r
+gh repo create x --private
+psql -c "select 1"
+psql -c "delete from t where id = 1"
+sqlite3 d.db "delete from t where id=1"
+sqlite3 d.db "select * from t"
+mysql -e "show tables"
+redis-cli get x
+redis-cli ping
+chmod +x a.sh
+chmod 644 ~/.ssh/id_rsa.pub
+chmod -R u+w build
+chown me file
+mkdir -p a/b
+mkdir -p a/{b,c}
+touch a
+cp a b
+cp -r a b
+mv a b
+ln -s a b
+cat README.md
+cat ~/.ssh/id_rsa.pub
+cat ~/.ssh/config
+cat .npmrc
+cat ~/.claude/settings.json
+cat .claude/settings.json
+ssh -i ~/.ssh/id_ed25519 host uptime
+ssh host "ls -la"
+scp -i ~/.ssh/id_rsa a host:/tmp
+ssh-add ~/.ssh/id_ed25519
+ssh-keygen -y -f ~/.ssh/id_rsa
+sed 's/a/b/' file
+sed -i 's/a/b/' file
+awk '{print $1}' file
+awk 'NR==1' file | head
+head -5 a | tail -1
+wc -l *.ts
+ls *.md
+cat *.txt
+sort a | uniq -c
+jq . a.json
+tar czf a.tgz src
+tar xzf a.tgz
+zip -r a.zip src
+export FOO=bar
+FOO=bar npm test
+X=1; echo $X
+BIN=./tool; $BIN --help
+for f in a b; do echo $f; done
+for f in *.ts; do wc -l $f; done
+for i in 1 2 3; do sleep 1; done
+for ((i=0;i<3;i++)); do echo $i; done
+while read l; do echo "$l"; done < file
+if [ -f a ]; then cat a; fi
+if [[ -f a && -d b ]]; then ls; fi
+[[ $x =~ ^(a|b)$ ]] && echo yes
+case $x in a) echo a;; b) echo b;; esac
+(( i++ ))
+echo $((1 + 2))
+echo $(date)
+echo "$(git rev-parse HEAD)"
+cd src && ls
+cd /tmp
+time npm test
+timeout 5 npm test
+nohup node server.js &
+sudo ls
+sudo -l
+command -v rm
+which rm
+type rm
+env
+env FOO=1 ls
+xargs echo
+ls | xargs echo
+ls | xargs -n1 wc -l
+eval "$(/opt/homebrew/bin/brew shellenv)"
+eval "$(ssh-agent -s)"
+eval "echo hi"
+source .venv/bin/activate
+. ./env.sh
+fdisk -l
+diskutil list
+crontab -l
+kill 1234
+kill -9 1234
+pkill -f server.js
+ps aux | grep node
+dd if=/dev/zero of=/dev/null bs=1M count=1
+make test
+cargo build
+cargo test
+go test ./...
+pytest -q
+tsc --noEmit
+security list-keychains
+security find-generic-password -s x
+sayso status
+sayso doctor
+sayso audit
+sayso --help
+constructor x
+toString
+mcp list
+watch -n 1 ls
+parallel echo ::: a b
+rm -rf /tmp/build-123
+rm -rf /private/tmp/claude-501/scratch/x
+rm -f /tmp/x*.png
+S=.scratch/smoke; rm -rf $S
+rm -rf scratch/run1
+rm -rf "$TMPDIR/build"
+D=$(mktemp -d); rm -rf "$D"
+D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+find . -name __pycache__ -type d -prune -exec rm -rf {} +
+find . -name "*.pyc" -delete
+python3 - <<'EOF'\nimport subprocess\nsubprocess.run(["git", "status"])\nEOF
+start() { tool start $1 | grep x; }; start a
+rm -f dist/*.map
+rm -rf .playwright-mcp/*.png
+T=$(command -v jq); "$T" . a.json
+for d in dist build; do rm -rf $d; done
+for c in "npm test" "npm run lint"; do eval "$c"; done
+for p in python3 python3.12; do $p --version; done
+for x in do done; do echo $x; done | sort

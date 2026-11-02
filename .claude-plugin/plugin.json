@@ -1,0 +1,10 @@
+{
+  "name": "sayso",
+  "version": "0.1.0",
+  "description": "Your agent can see your Claude Code sessions and answer them. Nothing destructive runs without your say-so, even with permissions bypassed.",
+  "author": { "name": "Abhay Mettu" },
+  "repository": "https://github.com/abhaymettu/sayso",
+  "license": "MIT",
+  "keywords": ["safety", "permissions", "mcp", "agents", "remote"],
+  "hooks": "./hooks/hooks.json"
+}

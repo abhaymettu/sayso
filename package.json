@@ -1,0 +1,21 @@
+{
+  "name": "sayso",
+  "version": "0.1.0",
+  "description": "Your agent can see your Claude Code sessions and answer them. Nothing destructive runs without your say-so.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Abhay Mettu",
+  "repository": "github:abhaymettu/sayso",
+  "homepage": "https://abhaymettu.github.io/sayso/",
+  "bin": { "sayso": "bin/sayso.mjs" },
+  "engines": { "node": ">=20" },
+  "files": ["bin", "src", "hooks", "skills", ".claude-plugin", "README.md", "AGENTS.md", "LICENSE"],
+  "scripts": {
+    "test": "node --test --test-timeout=120000 --test-concurrency=4 test/*.test.mjs",
+    "test:unit": "node --test test/unit.test.mjs test/classify.test.mjs test/box.test.mjs",
+    "test:e2e": "node --test --test-timeout=120000 --test-concurrency=2 test/e2e.test.mjs test/attacks.test.mjs",
+    "test:live": "node test/live.mjs",
+    "bench": "node bench/latency.mjs",
+    "probe": "node test/probe-hooks.mjs"
+  }
+}

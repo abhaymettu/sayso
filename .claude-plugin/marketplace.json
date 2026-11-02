@@ -1,0 +1,16 @@
+{
+  "name": "sayso",
+  "owner": {
+    "name": "Abhay Mettu"
+  },
+  "plugins": [
+    {
+      "name": "sayso",
+      "source": "./",
+      "description": "Your agent can see your Claude Code sessions and answer them. Nothing destructive runs without your say-so, even with permissions bypassed."
+    }
+  ],
+  "metadata": {
+    "description": "sayso: remote control for Claude Code with a human key."
+  }
+}
