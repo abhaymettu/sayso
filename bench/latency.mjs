@@ -154,7 +154,7 @@ function hookAlone() {
   return (async () => {
     for (let i = 0; i < 50; i++) {
       const t = performance.now();
-      const child = spawn("sh", [script, "gate"], { env: rig.env(), stdio: ["pipe", "ignore", "ignore"] });
+      const child = spawn("sh", [script, "clean", "gate"], { env: rig.env(), stdio: ["pipe", "ignore", "ignore"] });
       child.stdin.end(input);
       await new Promise((r) => child.on("exit", r));
       samples.push(performance.now() - t);

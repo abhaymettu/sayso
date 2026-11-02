@@ -12,7 +12,7 @@ but cannot make.
 ## 1. Check the machine
 
 ```sh
-node --version     # needs 20 or newer
+node --version     # needs 22.14 or newer
 claude --version   # needs Claude Code
 ```
 

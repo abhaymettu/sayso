@@ -641,7 +641,7 @@ const SECRET_GLOB = /^(?:\.ssh|\.aws|\.kube|\.docker|\.gnupg|\.azure|\.config\/g
 const SECRET_HINT = /\.ssh|\.aws|\.netrc|\.authinfo|\.npmrc|\.pypirc|\.docker|\.kube|\.gnupg|\.config|\.git-credentials|\.pgpass|\.my\.cnf|\.mylogin|\.vault-token|\.s3cfg|\.boto|\.azure|\.cargo|\.gem|\.terraform\.d|\.password-store|keychains|\.env/i;
 const SECRET_IN_CODE = /\.ssh\/id_(?!\w*\.pub)|\.aws\/credentials|\.config\/gh\/hosts\.yml|\.netrc\b|\.npmrc\b|\.pypirc\b|\.docker\/config\.json|\.kube\/config|\.gnupg\/|\.git-credentials\b|\.pgpass\b|\.vault-token\b|\.my\.cnf\b|application_default_credentials|\.azure\/accessTokens/i;
 const ENV_FILE = /^\.env(?:\.(?!example|sample|template|dist|defaults?\b)[\w-]+)*$/i;
-const PERSISTENCE_HOME = /^(?:\.ssh\/(?:authorized_keys2?|config|rc)|\.bashrc|\.zshrc|\.zshenv|\.zprofile|\.zlogin|\.zlogout|\.profile|\.bash_profile|\.bash_login|\.bash_logout|\.bash_aliases|\.gitconfig|\.config\/git\/config|\.config\/fish\/(?:config\.fish|conf\.d\/.+|functions\/.+)|\.tmux\.conf|\.config\/autostart\/.+|\.config\/systemd\/user\/.+|library\/launchagents\/.+)$/i;
+const PERSISTENCE_HOME = /^(?:\.ssh\/(?:authorized_keys2?|config|rc)|\.bashrc|\.zshrc|\.zshenv|\.zprofile|\.zlogin|\.zlogout|\.profile|\.bash_profile|\.bash_login|\.bash_logout|\.bash_aliases|\.gitconfig|\.config\/git\/config|\.config\/fish\/(?:config\.fish|conf\.d\/.+|functions\/.+)|\.tmux\.conf|\.config\/autostart\/.+|\.config\/systemd\/user\/.+|library\/launchagents\/.+|\.local\/bin\/node|\.volta\/bin\/node|\.nvm\/versions\/node\/[^/]+\/bin\/node|\.local\/share\/fnm\/aliases\/default\/bin\/node|\.fnm\/aliases\/default\/bin\/node|\.asdf\/shims\/node|\.local\/share\/mise\/shims\/node)$/i;
 const GIT_HOOK_FILE = /\/\.git\/hooks\/[^/]+$/i;
 const PERSISTENCE_SYSTEM = /^\/(?:etc\/|library\/launchdaemons\/|library\/launchagents\/)/i;
 
@@ -1833,10 +1833,43 @@ function globReachesRoot(target, st) {
   return [...PROTECTED_ROOTS].some((root) => root !== '/' && segmentCouldBe(top.slice(1), root.slice(1)));
 }
 
+const MAX_BRACE_WORDS = 64;
+const BRACE_GROUP = /\{([^{}]*,[^{}]*)\}/;
+
+/** `dist/{../.git,}` is two words to a shell, and only the words say what the delete reaches. Past the cap the word stays whole, which no allowance accepts. */
+function braceWords(arg) {
+  let words = [arg.text];
+  while (words.some((word) => BRACE_GROUP.test(word)) && words.length <= MAX_BRACE_WORDS) {
+    words = words.flatMap((word) => {
+      const group = BRACE_GROUP.exec(word);
+      return group ? group[1].split(',').map((choice) => word.slice(0, group.index) + choice + word.slice(group.index + group[0].length)) : [word];
+    });
+  }
+  return words.map((text) => (text === arg.text ? arg : { ...arg, text, glob: arg.glob || hasGlob(text), dynamic: arg.dynamic || hasGlob(text) }));
+}
+
+const HOME_SPELLED = /^(?:\$\{HOME\b[^}]*\}|~-?)(?=\/|$)/;
+const WHOLE_AT_RUN_TIME = /^(?:\$\(.*\)|`.*`|\$\{[^}]*\}|\$\w+|\$[@*])\/*\*?$/s;
+
+/** Whether a target could be the home folder or a system root once the shell has expanded it. A word with nothing literal in it, or a glob under one, counts too when `wide`, for a call that is held either way. */
+function couldBeRoot(target, st, wide = false) {
+  return braceWords(target).some((word) => {
+    if (WHOLE_AT_RUN_TIME.test(word.text) && (wide || /~|\bHOME\b/.test(word.text))) return true;
+    const text = word.text.replace(HOME_SPELLED, st.home);
+    if (isProtectedRoot(deleteRootOf({ ...word, text }, st), st)) return true;
+    if (!wide) return false;
+    const segments = text.split('/');
+    const firstGlob = segments.findIndex((segment) => hasGlob(segment));
+    if (firstGlob < 0) return false;
+    const prefix = segments.slice(0, firstGlob).join('/');
+    return prefix !== '' ? isProtectedRoot(resolvePath(prefix, st), st) : text[0] === '/';
+  });
+}
+
 function classifyRecursiveDelete(target, st) {
   const root = deleteRootOf(target, st);
-  if ((isProtectedRoot(root, st) && (!target.dynamic || target.text.endsWith('*') || !target.text.includes('$'))) || globReachesRoot(target, st)) {
-    flag(st, CATASTROPHIC, root === st.home ? 'recursive delete of home directory' : 'recursive delete of a system root');
+  if (couldBeRoot(target, st, true) || globReachesRoot(target, st)) {
+    flag(st, CATASTROPHIC, root === st.home ? 'recursive delete of home directory' : WHOLE_AT_RUN_TIME.test(target.text) ? 'recursive delete of a path known only when it runs, which could be the home directory' : 'recursive delete of a system root');
     return;
   }
   if (isRebuildable(target, st) || isOsScratch(target, st)) return;
@@ -1860,6 +1893,8 @@ function classifyPlainDelete(target, st) {
   if (relative !== null && relative[0] === '.') flag(st, DESTRUCTIVE, 'delete of a home dot path');
 }
 
+const POSITIONAL_PARAMETER = /\$(?:[1-9@*]|\{[1-9@*])/;
+
 function ruleRm(args, _io, st) {
   let recursive = false;
   let flagsEnded = false;
@@ -1875,17 +1910,18 @@ function ruleRm(args, _io, st) {
       } else if (text.includes('r') || text.includes('R')) recursive = true;
     } else targets.push(arg);
   }
-  // An unquoted expansion can carry flags as well as names, so `rm $X victim` may be recursive and `$@` always may.
-  const carriesFlags = targets.some((target) => target.splits);
-  for (const target of targets) {
-    if (recursive || (carriesFlags && !target.splits)) classifyRecursiveDelete(target, st);
+  // An unquoted expansion can carry flags as well as names, so `rm $X victim` may be recursive and `$@` always may. A
+  // function's `$1` is the same however it is quoted, since the caller chooses it: `x() { rm "$1" "$2"; }; x -rf victim`.
+  const carriesFlags = targets.some((target) => target.splits || POSITIONAL_PARAMETER.test(target.script));
+  for (const target of targets.flatMap(braceWords)) {
+    if (recursive || (carriesFlags && (!target.splits || POSITIONAL_PARAMETER.test(target.script)))) classifyRecursiveDelete(target, st);
     else if (target.splits) flag(st, DESTRUCTIVE, 'delete with flags or names chosen at run time');
     else classifyPlainDelete(target, st);
   }
 }
 
 function ruleRimraf(args, _io, st) {
-  for (const target of positionals(args)) classifyRecursiveDelete(target, st);
+  for (const target of positionals(args).flatMap(braceWords)) classifyRecursiveDelete(target, st);
 }
 
 function ruleRmdir(args, _io, st) {
@@ -1944,6 +1980,10 @@ function ruleMv(args, io, st) {
   if (pos.length > 0 && resolvePath(pos.at(-1).text, st) === '/dev/null') flag(st, DESTRUCTIVE, 'move into /dev/null');
   for (const source of named.length ? pos : pos.slice(0, -1)) {
     checkCopiesGuard(source, st);
+    if (couldBeRoot(source, st)) {
+      flag(st, CATASTROPHIC, 'moves the home directory or a system root');
+      continue;
+    }
     if (source.dynamic && !source.glob) continue;
     const path = deleteRootOf(source, st);
     if (isProtectedRoot(path, st)) flag(st, DESTRUCTIVE, 'moves a protected root directory');
@@ -1973,7 +2013,9 @@ function ruleDdrescue(args, _io, st) {
 }
 
 function ruleShred(args, _io, st) {
-  const onDevice = positionals(args).some((arg) => resolvePath(arg.text, st).startsWith('/dev/'));
+  const targets = positionals(args);
+  const onDevice = targets.some((arg) => resolvePath(arg.text, st).startsWith('/dev/'));
+  if (targets.some((arg) => couldBeRoot(arg, st, true))) flag(st, CATASTROPHIC, 'shred of the home directory or a system root');
   flag(st, onDevice ? CATASTROPHIC : DESTRUCTIVE, onDevice ? 'shred of a device' : 'shred of a file');
 }
 
@@ -2120,6 +2162,7 @@ const GIT_RULES = {
   __proto__: null,
   push: (args) => (!isDryRun(args) && !hasFlag(args, '-n') && args.some((arg) => isForcePushFlag(arg.text)) ? 'git push that rewrites or deletes remote refs' : null),
   reset: (args) => (hasFlag(args, '--hard') ? 'git reset --hard' : null),
+  worktree: (args) => (args[0]?.text === 'remove' && (hasShortFlag(args, 'f') || hasFlag(args, '--force')) ? 'git worktree remove --force deletes uncommitted work' : null),
   clean: (args) => {
     if (hasFlag(args, '-n', '--dry-run') || hasShortFlag(args, 'n')) return null;
     return hasShortFlag(args, 'f') || hasFlag(args, '--force') ? 'git clean deletes untracked files' : null;
@@ -2176,7 +2219,8 @@ function ruleGit(args, _io, st) {
     rest = [...pieces.slice(1).map((piece) => literalArg(piece, st)), ...rest];
   }
   const why = GIT_RULES[subcommand]?.(rest);
-  if (why) flag(st, DESTRUCTIVE, why);
+  if (why) flag(st, subcommand === 'clean' && positionals(rest).some((arg) => couldBeRoot(arg, st, true)) ? CATASTROPHIC : DESTRUCTIVE, why);
+  if (subcommand === 'mv') noteRename(rest, st);
   if (rest.some((arg) => GIT_TRANSPORT_RUNS.test(arg.text))) flag(st, OPAQUE, 'git transport runs a command');
   if (subcommand === 'clone') {
     const dest = positionals(rest, GIT_CLONE_VALUE_FLAGS)[1];
@@ -2320,6 +2364,11 @@ function dangerousSql(source) {
       if (/\bdelete\s+from\b/.test(statement) && !/\bwhere\b/.test(statement)) return 'sql delete with no where';
     }
   }
+  if (sql.includes('update')) {
+    for (const statement of sql.split(';')) {
+      if (/\bupdate\s+[\w"`.]+\s+set\b/.test(statement) && !/\bwhere\b/.test(statement)) return 'sql update with no where';
+    }
+  }
   return null;
 }
 
@@ -2392,16 +2441,15 @@ function ruleOpenssl(args, io, st) {
 
 // The session's dialog sits on its own terminal, so anything that types there can answer it.
 const TYPES_KEYS = 'types keys into a terminal, which can answer its own dialog';
-const TMUX_TYPES = /^send(?:-k(?:e(?:ys?)?)?)?$|^send-prefix$|^paste(?:b|-buffer)?$|^pasteb.*$/;
-const SCREEN_TYPES = /^(?:stuff|paste|readbuf|writebuf)$/;
+const TMUX_TYPES = /^send(?:-k(?:e(?:ys?)?)?)?$|^send-prefix$|^paste(?:b|-buffer)?$|^pasteb.*$|^if(?:-shell)?$|^run(?:-shell)?$|^source(?:-file)?$/;
 
 function ruleTmux(args, io, st, key) {
-  if (positionals(args).some((arg) => TMUX_TYPES.test(arg.text))) flag(st, SELF, TYPES_KEYS);
+  if (hasFlag(args, '-f') || positionals(args).some((arg) => TMUX_TYPES.test(arg.text))) flag(st, SELF, TYPES_KEYS);
   ruleArgvRunner(args, io, st, key);
 }
 
 function ruleScreen(args, io, st, key) {
-  if (args.some((arg, i) => SCREEN_TYPES.test(arg.text) && (args[i - 1]?.text === '-X' || /^-[A-Za-z]*X$/.test(args[i - 1]?.text ?? '')))) flag(st, SELF, TYPES_KEYS);
+  if (args.some((arg) => /^-[A-Za-z]*X$/.test(arg.text))) flag(st, SELF, TYPES_KEYS);
   ruleArgvRunner(args, io, st, key);
 }
 
@@ -2413,7 +2461,9 @@ function ruleTerminalRemote(verb) {
 
 // Without hooks the nested session has no gate, while a plain nested `claude -p` still has one.
 const CLAUDE_SKIPS_HOOKS = /^--(?:bare|safe-mode|setting-sources|settings)(?:=|$)/;
-const CLAUDE_LOOKS_ELSEWHERE = new Set(['CLAUDE_CONFIG_DIR', 'HOME', 'XDG_CONFIG_HOME']);
+// These move its config, switch its hooks off or stop the shell that starts them. A renamed link to the binary gets past this.
+const CLAUDE_LOOKS_ELSEWHERE = /^(?:CLAUDE_CONFIG_DIR|HOME|XDG_CONFIG_HOME|CLAUDE_CODE_\w+|SHELLOPTS|BASHOPTS|BASH_ENV|BASH_FUNC_.+|ENV|PS4|IFS|NODE_OPTIONS|LD_\w+|DYLD_\w+)$/;
+const CLAUDE_PLUGIN_OFF = /^(?:disable|uninstall|remove|rm)$/;
 const ENV_DROPS_CONFIG = /^(?:-u|--unset=)?CLAUDE_CONFIG_DIR$|^-i$|^--ignore-environment$|^-$/;
 const CLAUDE_NO_SESSION = new Set(['auth', '--version', '-v', '--help', '-h']);
 const NO_GATE = 'starts a session with no gate';
@@ -2421,12 +2471,15 @@ const NO_GATE = 'starts a session with no gate';
 function ruleClaude(args, _io, st) {
   if (CLAUDE_NO_SESSION.has(args[0]?.text)) return;
   if (args.some((arg) => CLAUDE_SKIPS_HOOKS.test(arg.text))) flag(st, SELF, NO_GATE);
-  for (const name of CLAUDE_LOOKS_ELSEWHERE) if (st.env.has(name)) flag(st, SELF, NO_GATE);
+  for (const name of st.env.keys()) if (CLAUDE_LOOKS_ELSEWHERE.test(name)) flag(st, SELF, NO_GATE);
+  const words = args.slice(1);
+  if (/^plugins?$/.test(args[0]?.text) && words.some((arg) => CLAUDE_PLUGIN_OFF.test(arg.text)) && words.some((arg) => arg.dynamic || arg.text === '--all' || /sayso/i.test(arg.text))) flag(st, SELF, 'switches the guard off');
+  if (args[0]?.text === 'config' && words.some((arg) => arg.dynamic || /disableAllHooks|enabledPlugins/i.test(arg.text))) flag(st, SELF, 'switches the guard off');
 }
 
 /** A prefix assignment lasts one command, and `CLAUDE_CONFIG_DIR=x timeout 60 claude` only shows `claude` once the wrappers are peeled. */
 function dispatchWithConfigMoved(names, argv, io, st) {
-  const moved = names.filter((name) => CLAUDE_LOOKS_ELSEWHERE.has(name) && !st.env.has(name));
+  const moved = names.filter((name) => CLAUDE_LOOKS_ELSEWHERE.test(name) && !st.env.has(name));
   for (const name of moved) st.env.set(name, UNKNOWN);
   dispatch(argv, io, st);
   for (const name of moved) st.env.delete(name);
@@ -2605,7 +2658,7 @@ function ruleFind(args, io, st) {
     }
     if (text === '-delete') {
       const reach = scope();
-      if (reach && isProtectedRoot(reach, st)) flag(st, CATASTROPHIC, 'find -delete from a protected root');
+      if ((reach && isProtectedRoot(reach, st)) || (root && !cleansRebuildables && couldBeRoot(root, st, true))) flag(st, CATASTROPHIC, 'find -delete from a protected root');
       else if (!cleansRebuildables) flag(st, DESTRUCTIVE, 'find -delete');
     } else if (text === '-exec' || text === '-execdir' || text === '-ok' || text === '-okdir') {
       const inner = [];
@@ -2784,6 +2837,7 @@ const INLINE_CODE = {
   __proto__: null,
   python: { code: /^-[A-Za-z]*c$/, glued: 'c', stop: 'WXm', values: new Set(['-W', '-X']) },
   node: { code: /^(?:-e|--eval|-p|--print|-pe)$/, values: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader']) },
+  swift: { code: /^-e$/, values: new Set(), also: checkSwift },
   perl: { code: /^-[A-Za-z0-9.]*[eE]$/, glued: 'eE', stop: 'IMmxiCDFd', runsBare: true, values: new Set(['-I', '-M']) },
   ruby: { code: /^-[A-Za-z]*e$/, glued: 'e', stop: 'IrEKCFTWx', runsBare: true, values: new Set(['-I', '-r']) },
   php: { code: /^-r$/, glued: 'r', stop: 'cdfzt', runsBare: true, values: new Set(['-c', '-d']) },
@@ -2806,8 +2860,15 @@ const INLINE_CODE = {
   'ts-node': { code: /^(?:-e|--eval|-p|--print)$/, values: new Set() },
 };
 
+// TIOCSTI pushes bytes into a terminal's input, as a name or as its number on Linux or macOS.
+const PUSHES_TERMINAL_INPUT = /TIOCSTI|0x5412\b|0x80017472\b|\b21522\b/;
+
+function checkSwift(code, st) {
+  if (/\b(?:removeItem|trashItem|remove)\s*\(/.test(code)) flag(st, DESTRUCTIVE, 'inline code deletes files');
+}
+
 function checkOsascript(code, st) {
-  if (/\b(?:keystroke|key code|write text|do script)\b/i.test(code)) flag(st, SELF, TYPES_KEYS);
+  if (/\b(?:keystroke|key\s?code|write\s?text|do\s?script)\b/i.test(code)) flag(st, SELF, TYPES_KEYS);
   if (/\bdelete\b|\bempty\s+(?:the\s+)?trash\b|\berase\b/i.test(code)) flag(st, DESTRUCTIVE, 'inline code deletes files');
 }
 
@@ -2828,6 +2889,7 @@ function interpreterRule(spec) {
     const inline = (code, sole) => {
       runsArgv ||= spec.runsBare === true && RUNS_ITS_ARGV.test(code);
       checkInlineCode(code, sole, st, CODE_PATTERNS, spec.runsBare);
+      if (PUSHES_TERMINAL_INPUT.test(code)) flag(st, SELF, TYPES_KEYS);
       spec.also?.(code, st);
     };
     const notCode = [];
@@ -2887,6 +2949,7 @@ function interpreterRule(spec) {
     if (hasProgram) return;
     if (io.heredoc !== null) {
       checkInlineCode(io.heredoc, false, st, SCRIPT_PATTERNS);
+      if (PUSHES_TERMINAL_INPUT.test(io.heredoc)) flag(st, SELF, TYPES_KEYS);
       spec.also?.(io.heredoc, st);
     } else if (io.herestring !== null) inline(io.herestring, false);
     else if (io.piped || io.stdinUnknown) flag(st, OPAQUE, 'pipeline into an interpreter');
@@ -3027,6 +3090,12 @@ const RULES = {
   gpg: ruleAnyArg(/^--export-secret-(?:sub)?keys\b/, CREDENTIALS, 'exports a secret key'),
   claude: ruleClaude,
   unset: ruleUnset,
+  zip: ruleAnyArg(/^-[A-Za-z]*m[A-Za-z]*$|^--move$/, DESTRUCTIVE, 'zip -m deletes what it archives'),
+  tar: ruleAnyArg(/^--remove-files$/, DESTRUCTIVE, 'tar --remove-files deletes what it archives'),
+  tmate: ruleTmux,
+  byobu: ruleTmux,
+  xte: always(SELF, TYPES_KEYS),
+  it2api: ruleTerminalRemote(/^send-text$/),
   xdotool: always(SELF, TYPES_KEYS),
   ydotool: always(SELF, TYPES_KEYS),
   wtype: always(SELF, TYPES_KEYS),
@@ -3136,6 +3205,22 @@ for (const [name, check] of Object.entries(EXTRA_VERB_CHECKS)) {
 // Public API.
 
 /** @param {string} command @param {Ctx} ctx @returns {Verdict|null} */
+// A script file runs code these rules can't read for keystrokes. A heredoc and `-e` are read, in either language.
+const readOsascript = RULES.osascript;
+RULES.osascript = (args, io, st, key) => {
+  if (!io.heredoc && !args.some((arg) => arg.text.startsWith('-e'))) flag(st, SELF, TYPES_KEYS);
+  readOsascript(args, io, st, key);
+};
+
+// These also run a program given to them, so they are listed as runners and only gain this.
+for (const [name, types] of [['dtach', '-p'], ['abduco', '-a']]) {
+  const runner = RULES[name];
+  RULES[name] = (args, io, st, key) => {
+    if (hasFlag(args, types)) flag(st, SELF, TYPES_KEYS);
+    runner(args, io, st, key);
+  };
+}
+
 export function classifyShell(command, ctx) {
   deadline = performance.now() + MAX_CLASSIFY_MS;
   return readCommand(command, ctx);
@@ -3213,20 +3298,31 @@ const TOOL_RULES = {
 };
 
 // `send`, `drop` and `pay` only count as whole name segments: `dropdown`, `payload` and `resend_status` are not actions.
-const MCP_OUTWARD_TOOL = /delete|destroy|remove|purge|wipe|terminate|revoke|publish|deploy|transfer|(?:^|[_-])(?:drop|send|pay)(?:[_-]|$)/;
+const MCP_OUTWARD_TOOL = /delete|destroy|remove|purge|wipe|terminate|revoke|publish|deploy|transfer|(?:^|[_-])(?:drop|send|pay|rm|rmdir|unlink|erase|refund|forward|push|merge|reset|kill|stop|move|mv|rename|kubectl)(?:[_-]|$)|^truncate(?:[_-](?:table|file|db|database))?$/;
 
 const MCP_READ_ONLY = /^(?:get|list|read|search|find|describe|show|fetch|view|count|check|is|has)(?:[_-]|$)/;
-const MCP_RUNS_THINGS = /exec|shell|write|command|(?:^|[_-])(?:re)?run(?:s|ner)?(?:[_-]|$)|(?:^|[_-])(?:bash|eval|terminal)(?:[_-]|$)/;
+const MCP_RUNS_THINGS = /exec|shell|write|command|(?:^|[_-])(?:re)?run(?:s|ner)?(?:[_-]|$)|(?:^|[_-])(?:bash|eval|terminal|spawn|launch|invoke|edit|patch|save|append|overwrite)(?:[_-]|$)|(?:^|[_-])create[_-](?:file|dir|directory|folder)(?:[_-]|$)|^(?:sh|zsh|python3?|node|ruby|perl|php|lua|applescript|osascript|powershell|pwsh|system)$/;
 // Servers name their arguments freely, so a key is read by its words: `shell_command`, `filePath`, `sqlQuery`.
-const MCP_COMMAND_KEY = new Set(['command', 'commands', 'cmd', 'cmds', 'script', 'scripts', 'shell', 'bash', 'sh']);
+const MCP_COMMAND_KEY = new Set(['command', 'commands', 'cmd', 'cmds', 'cmdline', 'script', 'scripts', 'shell', 'bash', 'sh', 'exec', 'executable', 'run', 'program', 'argv']);
+// What a shell makes of a program in another language, so it says nothing about that program.
+const NOT_SHELL_SYNTAX = new Set(['shell syntax could not be parsed', 'command name is not literal', 'a zsh glob qualifier runs code', 'empties a file']);
+// What a server calls the rest of a command, when its first word is under a command key.
+const MCP_ARGUMENT_KEYS = ['args', 'arguments', 'argv', 'params', 'parameters'];
 const MCP_SQL_KEY = new Set(['sql', 'statement', 'statements', 'stmt']);
-const MCP_PATH_KEY = new Set(['path', 'paths', 'file', 'files', 'filepath', 'filename', 'dir', 'directory', 'folder', 'dest', 'destination', 'target', 'src', 'source', 'cwd', 'root', 'output', 'outfile']);
+const MCP_PATH_KEY = new Set(['path', 'paths', 'file', 'files', 'filepath', 'filename', 'dir', 'directory', 'folder', 'dest', 'destination', 'target', 'src', 'source', 'cwd', 'root', 'output', 'outfile', 'uri', 'url', 'location', 'pathname']);
 const LOOKS_LIKE_SQL = /^\s*(?:select|with|insert|update|delete|drop|truncate|alter|create|grant|revoke|merge|replace)\b/i;
 const MAX_MCP_STRINGS = 256;
 const MAX_MCP_DEPTH = 8;
 
 const camelToSnake = (name) => name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 const shellQuote = (text) => `'${text.replaceAll("'", `'\\''`)}'`;
+const stringsIn = (value) => (Array.isArray(value) ? value.filter((word) => typeof word === 'string') : typeof value === 'string' ? [value] : []);
+
+/** `{command: ["rm", "-rf", "x"]}` and `{args: ["rm", "-rf", "x"]}` are one command a word at a time. Each word is read alone too, for a list of whole commands. */
+function mcpArgvString(words, found) {
+  const [first, ...rest] = words;
+  if (rest.length) found.items.push({ kind: 'command', text: [first, ...rest.map(shellQuote)].join(' ') });
+}
 
 /** Every string a tool call holds under a key that names what it is, at any depth. */
 function mcpStrings(value, kind, found, depth) {
@@ -3247,16 +3343,21 @@ function mcpStrings(value, kind, found, depth) {
   }
   for (const [key, child] of Object.entries(value)) {
     const words = camelToSnake(key).split(/[^a-z0-9]+/);
-    const childKind = words.some((word) => MCP_COMMAND_KEY.has(word)) ? 'command' : words.some((word) => MCP_SQL_KEY.has(word)) ? 'sql' : words.includes('query') ? 'query' : words.some((word) => MCP_PATH_KEY.has(word)) ? 'path' : kind;
-    // `{command: "sh", args: ["-c", "rm -rf x"]}` is one command in two fields.
-    if (childKind === 'command' && typeof child === 'string' && Array.isArray(value.args)) {
-      found.items.push({ kind: 'command', text: [child, ...value.args.filter((arg) => typeof arg === 'string').map(shellQuote)].join(' ') });
+    const childKind = words.some((word) => MCP_COMMAND_KEY.has(word)) ? 'command' : words.includes('code') ? 'code' : words.some((word) => MCP_SQL_KEY.has(word)) ? 'sql' : words.includes('query') || words.includes('q') ? 'query' : words.some((word) => MCP_PATH_KEY.has(word)) ? 'path' : kind;
+    // `{command: "sh", arguments: ["-c", "rm -rf x"]}` is one command in two fields.
+    const siblings = MCP_ARGUMENT_KEYS.filter((name) => name !== key).flatMap((name) => stringsIn(value[name]));
+    const runnable = childKind === 'command' || childKind === 'code';
+    if (runnable && typeof child === 'string' && siblings.length) mcpArgvString([child, ...siblings], found);
+    else if (Array.isArray(child) && (runnable || (MCP_ARGUMENT_KEYS.includes(key) && !Object.keys(value).some((name) => MCP_COMMAND_KEY.has(camelToSnake(name)))))) {
+      mcpArgvString(stringsIn(child), found);
+      if (runnable) mcpStrings(child, childKind, found, depth + 1);
     } else mcpStrings(child, childKind, found, depth + 1);
   }
 }
 
 function classifyMcpPath(text, readOnly, ctx) {
   const st = newState(ctx);
+  if (/^(?!file:)[a-z][a-z0-9+.-]*:\/\//i.test(text)) return null;
   const path = resolvePath(text.replace(/^file:\/\//, ''), st);
   if (namesStateDir(path, st)) flag(st, SELF, 'names the guard state directory');
   if (isSecretPath(path, st)) flag(st, CREDENTIALS, 'names a secret file');
@@ -3270,9 +3371,14 @@ function classifyMcpPath(text, readOnly, ctx) {
 function classifyMcpString({ kind, text }, readOnly, ctx) {
   if (text.length > MAX_COMMAND_LENGTH) return opaqueVerdict('command is too long to read');
   if (kind === 'command') return readCommand(text, ctx);
+  if (kind === 'code') {
+    const asShell = readCommand(text, ctx);
+    return worstVerdict([asShell?.why.some((why) => !NOT_SHELL_SYNTAX.has(why)) ? asShell : null, readCommand(`node -e ${shellQuote(text)}`, ctx)]);
+  }
   if (kind === 'path') return classifyMcpPath(text, readOnly, ctx);
-  if (kind === 'query' && !LOOKS_LIKE_SQL.test(text)) return null;
-  const why = dangerousSql(text);
+  const sql = text.replace(/\/\*[^]*?\*\//g, ' ').replace(/(?:--|#)[^\n]*/g, ' ').replace(/^[\s(]+/, '');
+  if (kind === 'query' && !LOOKS_LIKE_SQL.test(sql)) return null;
+  const why = dangerousSql(sql);
   return why ? { risk: DESTRUCTIVE, why: [why] } : null;
 }
 

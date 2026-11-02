@@ -37,6 +37,7 @@ const requestUrl = (base, doc) => `${base}#r=${doc}`;
 const keysOf = (...pairings) => pairings.map((p) => ({ id: p.id, public_key: p.public_key, name: "test" }));
 
 async function hold(page, ms) {
+  await page.locator(".hold:not([disabled])").waitFor();
   await page.locator(".hold").scrollIntoViewIfNeeded();
   const box = await page.locator(".hold").boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -85,7 +86,7 @@ const TESTS = {
     const body = await page.locator("#app").innerText();
     assert.ok(body.includes(pairing.id), "shows the key id");
     assert.ok(body.includes("close this page"), "says the page can be closed");
-    assert.ok(body.includes("home screen") && body.includes("sayso pair"), "explains the iPhone week limit and the way back");
+    assert.ok(body.includes("a week") && body.includes("sayso pair"), "explains the iPhone week limit and the way back");
     await assertNoOverflow(page, "paired");
 
     await page.goto("about:blank");
@@ -115,7 +116,7 @@ const TESTS = {
     const doc = fixtureDoc();
     await page.goto("about:blank");
     await page.goto(requestUrl(base, doc));
-    await page.locator(".hold").waitFor();
+    await page.locator(".hold:not([disabled])").waitFor();
     await page.locator(".hold").click();
     await page.waitForTimeout(1000);
     await noCodeAppeared(page);
@@ -144,7 +145,7 @@ const TESTS = {
       const doc = fixtureDoc();
       await page.goto("about:blank");
       await page.goto(requestUrl(base, doc));
-      await page.locator(".hold").waitFor();
+      await page.locator(".hold:not([disabled])").waitFor();
       await page.locator(".hold").tap();
       await page.waitForTimeout(1000);
       await noCodeAppeared(page);
@@ -168,7 +169,7 @@ const TESTS = {
     await page.getByRole("heading", { name: "This device is paired" }).waitFor();
     await page.goto("about:blank");
     await page.goto(requestUrl(base, fixtureDoc()));
-    await page.locator(".hold").waitFor();
+    await page.locator(".hold:not([disabled])").waitFor();
     const box = await page.locator(".hold").boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
@@ -187,6 +188,7 @@ const TESTS = {
     const doc = fixtureDoc();
     await page.goto("about:blank");
     await page.goto(requestUrl(base, doc));
+    await page.locator(".hold:not([disabled])").waitFor();
     await page.locator(".hold").focus();
     await page.keyboard.press("Space");
     await page.waitForTimeout(500);
@@ -211,7 +213,7 @@ const TESTS = {
     const doc = fixtureDoc();
     await page.goto("about:blank");
     await page.goto(requestUrl(base, doc));
-    await page.locator(".hold").waitFor();
+    await page.locator(".hold:not([disabled])").waitFor();
     await hold(page, 950);
     const code = (await page.locator(".code").textContent()).trim();
     assert.equal(code.split(".")[1], newer.id);
@@ -314,6 +316,37 @@ const TESTS = {
     await noCodeAppeared(page);
   },
 
+  async "the hold stays off until a long command has been on the screen to its end"(ctx, base) {
+    const pairing = generatePairing();
+    const page = await ctx.newPage();
+    await page.goto(pairUrl(base, pairing));
+    await page.getByRole("heading", { name: "This device is paired" }).waitFor();
+    await page.goto("about:blank");
+    await page.goto(requestUrl(base, fixtureDoc({ display: `rm -rf ./cache \\\n${"\\\n".repeat(77)}~/Documents` })));
+    await page.locator(".hold").waitFor();
+    assert.equal(await page.locator(".hold").isDisabled(), true);
+    const box = await page.locator(".hold").boundingBox();
+    await page.mouse.move(box.x + 20, box.y + 20);
+    await page.mouse.down();
+    await page.waitForTimeout(1200);
+    await page.mouse.up();
+    await noCodeAppeared(page);
+    await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
+    await hold(page, 950);
+    await page.locator(".code").waitFor();
+  },
+
+  async "a request the page can't show in full has no hold at all"(ctx, base) {
+    const pairing = generatePairing();
+    const page = await ctx.newPage();
+    await page.goto(pairUrl(base, pairing));
+    await page.getByRole("heading", { name: "This device is paired" }).waitFor();
+    await page.goto("about:blank");
+    await page.goto(requestUrl(base, fixtureDoc({ unread: true })));
+    await page.getByText("This can't be approved here").waitFor();
+    assert.equal(await page.locator(".hold").count(), 0);
+  },
+
   async "an unpaired device shows the request and no way to approve"(ctx, base) {
     const page = await ctx.newPage();
     await page.goto(requestUrl(base, fixtureDoc()));
@@ -376,7 +409,7 @@ const TESTS = {
     await page.getByRole("heading", { name: "This device is paired" }).waitFor();
     await page.goto("about:blank");
     await page.goto(requestUrl(base, fixtureDoc()));
-    await page.locator(".hold").waitFor();
+    await page.locator(".hold:not([disabled])").waitFor();
     await hold(page, 950);
     const code = (await page.locator(".code").textContent()).trim();
     await page.getByRole("button", { name: "Share" }).click();
@@ -405,7 +438,7 @@ const TESTS = {
     await noCodeAppeared(page);
     assert.equal(await page.locator(".hold").count(), 0);
     await page.getByRole("button", { name: "I changed my mind" }).click();
-    await page.locator(".hold").waitFor();
+    await page.locator(".hold:not([disabled])").waitFor();
   },
 
   async "the demo signs with an in-memory key, never opens IndexedDB, and the lie fails a real verify"(ctx, base) {
@@ -426,7 +459,7 @@ const TESTS = {
     });
     const page = await ctx.newPage();
     await page.goto(base);
-    await page.locator(".hold").waitFor();
+    await page.locator(".hold:not([disabled])").waitFor();
     const reading = await page.locator("#app").innerText();
     assert.ok(reading.includes("rm -rf ./*"), "sample request is on screen");
     await hold(page, 950);
@@ -452,7 +485,7 @@ const TESTS = {
     await assertNoOverflow(page, "demo proof");
 
     await page.getByRole("button", { name: "Start over" }).click();
-    await page.locator(".hold").waitFor();
+    await page.locator(".hold:not([disabled])").waitFor();
   },
 
   async "the policy is exact and the page cannot reach any network"(ctx, base) {
@@ -460,7 +493,7 @@ const TESTS = {
     const requests = [];
     page.on("request", (r) => requests.push(r.url()));
     await page.goto(base);
-    await page.locator(".hold").waitFor();
+    await page.locator(".hold:not([disabled])").waitFor();
     assert.equal(await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute("content"), CSP);
     const blocked = await page.evaluate(async (origin) => {
       const results = {};
@@ -496,7 +529,7 @@ const TESTS = {
     const page = await ctx.newPage();
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto(base);
-    await page.locator(".hold").waitFor();
+    await page.locator(".hold:not([disabled])").waitFor();
     await page.locator(".hold").scrollIntoViewIfNeeded();
     const box = await page.locator(".hold").boundingBox();
     await page.mouse.move(box.x + 20, box.y + 20);
@@ -542,7 +575,7 @@ const TESTS = {
     for (const colorScheme of ["light", "dark"]) {
       await page.emulateMedia({ colorScheme });
       await page.goto(base);
-      await page.locator(".hold").waitFor();
+      await page.locator(".hold:not([disabled])").waitFor();
       const tokens = await page.evaluate((names) => {
         const style = getComputedStyle(document.documentElement);
         return Object.fromEntries(names.map((name) => [name, style.getPropertyValue(name).trim()]));
@@ -558,7 +591,7 @@ const TESTS = {
   async "layout stays inside 390 and a composed column at 1440, and every control is at least 44px"(ctx, base) {
     const page = await ctx.newPage();
     await page.goto(base);
-    await page.locator(".hold").waitFor();
+    await page.locator(".hold:not([disabled])").waitFor();
     const small = await page.evaluate(() =>
       [...document.querySelectorAll("button, a")]
         .filter((el) => el.offsetParent !== null)

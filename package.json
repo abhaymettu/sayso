@@ -8,7 +8,7 @@
   "repository": "github:abhaymettu/sayso",
   "homepage": "https://abhaymettu.github.io/sayso/",
   "bin": { "sayso": "bin/sayso.mjs" },
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22.14" },
   "files": ["bin", "src", "hooks", "skills", ".claude-plugin", "README.md", "AGENTS.md", "LICENSE"],
   "scripts": {
     "test": "node --test --test-timeout=1800000 --test-concurrency=4 test/*.test.mjs",

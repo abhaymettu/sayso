@@ -529,3 +529,17 @@ ls *(N)
 alias
 alias ll
 rm -f /tmp/out.$$
+
+# Near the rows the final review added, and must stay unflagged.
+rm -rf {dist,build}
+rm -rf dist/{a,b}
+mv "$f" "$g"
+git worktree remove ../wt
+zip -r ../x.zip victim
+tar -czf /tmp/x victim
+tmux new-session -d -s x
+tmux list-sessions
+claude plugin list
+claude -p hi
+osascript -e 'get volume settings'
+osascript -l JavaScript -e 'Application("Finder").name()'

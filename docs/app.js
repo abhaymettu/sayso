@@ -130,6 +130,7 @@ function parseRequest(doc) {
     why: strings(raw.why),
     warnings: strings(raw.warnings),
     display: raw.display,
+    unread: raw.unread === true,
     expiresAt,
   };
 }
@@ -190,8 +191,9 @@ function holdToConfirm(button, onConfirm) {
   run.pause();
   let pressed = false;
 
+  // A browser still delivers pointer events to a disabled button. Only the click is withheld.
   const press = () => {
-    if (pressed) return;
+    if (pressed || button.disabled) return;
     pressed = true;
     button.dataset.pressed = "";
     run.playbackRate = 1;
@@ -302,13 +304,43 @@ function realSignedPanel(sheetState) {
   return { panel, focus: panel.querySelector('[data-action="copy"]') };
 }
 
+// The button is under the thumb from the start, so a command longer than the screen has to reach the screen's end before it works.
+function holdUntilRead(state, hold, hint) {
+  if (state.read) return;
+  const labels = [...hold.querySelectorAll(".hold-label")];
+  const said = [labels[0].textContent, hint.textContent];
+  hold.disabled = true;
+  for (const label of labels) label.textContent = "Read to the end first";
+  hint.textContent = "Scroll to the end of the command. It has to be on your screen before it can be approved.";
+  const watcher = new IntersectionObserver((entries) => {
+    if (!entries.at(-1).isIntersecting) return;
+    state.read = true;
+    watcher.disconnect();
+    hold.disabled = false;
+    for (const label of labels) label.textContent = said[0];
+    hint.textContent = said[1];
+  }, { rootMargin: `0px 0px -${state.actions.offsetHeight}px 0px` });
+  watcher.observe(state.commandEnd);
+  const dispose = state.dispose;
+  state.dispose = () => {
+    watcher.disconnect();
+    dispose?.();
+  };
+}
+
 // A phase is what the action area shows. Everything else on the sheet stays put, so the request never moves while it is being judged.
 const PHASES = {
   ready(state) {
+    if (state.request.unread) {
+      const panel = clone("t-notice");
+      setText(panel, { title: "This can't be approved here", detail: "Part of it can't be shown to you, so a signature would release text you never read. Tell your agent no, or answer at the session's terminal." });
+      return { panel };
+    }
     const panel = clone("t-ready");
-    state.dispose = holdToConfirm(panel.querySelector(".hold"), () => state.approve());
+    const hold = panel.querySelector(".hold");
+    state.dispose = holdToConfirm(hold, () => state.approve());
     panel.querySelector('[data-action="decline"]').addEventListener("click", () => state.show("declined"));
-    return { panel };
+    return { panel, mounted: () => holdUntilRead(state, hold, panel.querySelector(".hint")) };
   },
   declined(state) {
     const panel = clone("t-declined");
@@ -362,6 +394,10 @@ function mountSheet({ doc, request, signer, lead, headingLevel, signedPanel }) {
   const actions = slot(sheet, "actions");
   const state = {
     phase: null,
+    request,
+    actions,
+    commandEnd: field(sheet, "display-end"),
+    read: false,
     code: null,
     dispose: null,
     markStale: null,
@@ -373,8 +409,9 @@ function mountSheet({ doc, request, signer, lead, headingLevel, signedPanel }) {
       state.dispose = null;
       state.phase = phase;
       actions.dataset.phase = phase;
-      const { panel, focus } = PHASES[phase](state);
+      const { panel, focus, mounted } = PHASES[phase](state);
       actions.replaceChildren(panel);
+      mounted?.();
       if (focus) revealPanel(actions, focus);
     },
     async approve() {
