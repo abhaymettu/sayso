@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { generatePairing, signAsDevice } from "../src/sign.mjs";
 import { startScriptedModel } from "./harness/scripted-model.mjs";
-import { apiKeyEnv, acceptFirstRun } from "./harness/tui.mjs";
+import { apiKeyEnv } from "./harness/tui.mjs";
 
 if (process.platform !== "linux" || process.env.SAYSO_THROWAWAY_BOX !== "yes" || process.getuid() === 0) {
   console.error("This changes the machine. Run it as a normal user on a throwaway Linux box with SAYSO_THROWAWAY_BOX=yes.");
@@ -68,7 +68,6 @@ const settings = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
 check("user settings no longer carry the hooks", !JSON.stringify(settings).includes("run.sh"));
 check("managed settings carry them", fs.readFileSync(MANAGED, "utf8").includes("run.sh"));
 fs.writeFileSync(settingsFile, JSON.stringify({ ...settings, skipDangerousModePermissionPrompt: true }));
-acceptFirstRun(box, process.env);
 
 const call = async (tool, args = {}) => {
   const res = await fetch(`http://127.0.0.1:${PORT}/v1/call/${tool}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(args) });
