@@ -42,7 +42,7 @@ claude plugin marketplace add abhaymettu/sayso
 claude plugin install sayso@sayso
 ```
 
-Run `/sayso:setup` in a session after that. Needs Node 20 or newer and Claude Code, on macOS or Linux. The plugin looks for
+Run `/sayso:setup` in a session after that. Needs Node 22.14 or newer and Claude Code, on macOS or Linux. The plugin looks for
 Node in the usual install locations rather than your `PATH`, and if it can't find it, every call blocks and says why.
 
 To see it work first, clone the repo and run `npm run test:smoke`. It installs into a temp folder and takes a real session
@@ -92,11 +92,15 @@ call that touches it is classified as `self`, and the command refuses to run the
 | Touching sayso itself | you | you, and no policy file can change this |
 
 Any flagged call with hidden characters, a part hidden as a possible secret, something the classifier couldn't finish
-reading, or too much to show in full goes to you whatever the policy says.
+reading, or too much to show in full goes to you whatever the policy says. If part of it is hidden or cut, your phone won't
+offer a hold at all, because it would be signing text it never showed you. Answer that one at the terminal, or run it again
+without the literal, as with `git push --force https://user:pass@host`. On a long command, the hold unlocks once the end of
+it has been on your screen.
 
 An MCP tool whose name says it runs or writes things is held by name, and its arguments are read like a command. If you
 trust one, add it to the policy, as in `"trust_tools": ["mcp__myserver__run_*"]`. That drops the hold on the name only, and a
-dangerous argument still gets held.
+dangerous argument still gets held. A rule has to spell out the server's whole name. Wider ones are ignored, and `sayso doctor`
+says so.
 
 If you are at the terminal when it happens, the normal Claude Code dialog appears, even in bypass mode, and the keyboard
 and your agent race. Whichever answers first wins.
@@ -165,8 +169,8 @@ test:live` runs the last one against a real model.
 
 ## Where it stops
 
-The gate holds only what the classifier recognises. These run with no hold, in any install: `rm -f` on a file, `mv`,
-`sed -i`, a write over an existing file, a script written and then run, a plain `git push`. Holding those would hold most of
+The gate holds only what the classifier recognises. These run with no hold, in any install: `rm -f` on a file, `git rm`,
+`unlink`, `mv`, `sed -i`, a write over an existing file, a script written and then run, a plain `git push`. Holding those would hold most of
 a normal day. The classifier exists so that a tired model's `rm -rf` reaches a person. It isn't a sandbox, and to contain a
 hostile process you want a VM. [The threat model](docs/threat-model.md) lists what else it misses.
 
@@ -175,17 +179,23 @@ script that edits your settings, then run it. So the default install catches com
 obvious routes. Think seatbelt.
 
 It also covers only the sessions it is installed for. A session under another `CLAUDE_CONFIG_DIR` has no gate. Neither does
-one you start with `--bare`, `--safe-mode` or `--setting-sources` without `user`, or an Agent SDK host with
-`settingSources: []`, since those skip user hooks. Claude Code's docs say `--bare` will become the default for `-p`, which
-would take `claude -p` out of a default install. A repository's own settings can also switch a default install off, with
-`disableAllHooks` or `CLAUDE_CODE_SHELL_PREFIX`, and no code of mine runs to stop that. `sayso doctor` warns when it finds them
-in the current folder.
+one you start with `--bare`, `--safe-mode`, `--setting-sources` without `user`, `CLAUDE_CODE_SIMPLE` or
+`CLAUDE_CODE_SAFE_MODE`, or an Agent SDK host with `settingSources: []`, since those skip user hooks. Claude Code's docs say
+`--bare` will become the default for `-p`, which would take `claude -p` out of a default install.
+
+A repository's own settings can switch a default install off too, and no code of mine runs to stop that. They can set
+`disableAllHooks`, set `enabledPlugins` to false on the plugin route, name a library with a loader variable like `LD_PRELOAD`,
+or add hooks of their own. Their `env` also reaches the commands a session runs, so `BASH_ENV` can run a repository's code
+inside a call the gate rightly passed. Treat running `claude` in a folder as trusting its settings. `sayso doctor`, run there
+first, warns about all of this.
 
 `sudo sayso harden`, on Linux with systemd, locks the gate in place. The daemon runs as its own user, and the hooks move to
 Claude Code's managed settings, which user settings can't remove. A session running as you can no longer change the keys,
 reach the owner's socket or stop the daemon, and `--bare`, `--safe-mode`, `disableAllHooks` and a project's settings don't
-skip the hooks. `sayso status` and `sayso deny` need `sudo` there. `test/harden.mjs` attacks all of that on a throwaway box. It
-doesn't change what the classifier recognises, and there is no macOS version yet.
+skip the hooks. It also blanks the loader and shell variables in managed `env`, so a session's zsh stops reading the startup
+files in your home. `PATH` and `NODE_OPTIONS` still reach what a session runs, and a repository's own hooks still run, as you.
+`sayso status` and `sayso deny` need `sudo` there. `test/harden.mjs` attacks all of that on a throwaway box. It doesn't change
+what the classifier recognises, and there is no macOS version yet.
 
 The approval page is the root of trust, since your phone signs what it shows. It is static, short enough to read, and its
 own security policy forbids network connections. The hosted copy shares its origin with the other Pages sites on my GitHub
