@@ -25,7 +25,22 @@ const die = (message) => {
   console.error(`sayso: ${message}`);
   process.exit(1);
 };
-const insideSession = () => !!process.env.CLAUDECODE || !!process.env.CLAUDE_CODE_ENTRYPOINT;
+function hasClaudeAncestor() {
+  let pid = process.ppid;
+  for (let depth = 0; pid > 1 && depth < 32; depth++) {
+    const line = spawnSync("ps", ["-o", "ppid=,command=", "-p", String(pid)], { encoding: "utf8" }).stdout?.trim() ?? "";
+    const [, parent, command] = /^(\d+)\s+(.*)$/s.exec(line) ?? [];
+    if (!parent) return false;
+    if (/(^|\/)claude(\s|$)|claude-code/.test(command)) return true;
+    pid = Number(parent);
+  }
+  return false;
+}
+// The variables can be stripped with `env -u`, so also walk the process tree. Both only raise the bar: a same-user process
+// can detach or edit the files directly, which is why the hardened install exists. Throwaway state in a temp folder, as in
+// the test rig, is not the guard and does not need guarding.
+const guardsRealState = () => path.resolve(paths.dir) === path.join(os.userInfo().homedir, ".sayso") || isHardened();
+const insideSession = () => !!process.env.CLAUDECODE || !!process.env.CLAUDE_CODE_ENTRYPOINT || (guardsRealState() && hasClaudeAncestor());
 const refuseInsideSession = (what) => {
   if (insideSession()) die(`run ${what} in your own terminal, not inside a Claude Code session. It would put a secret in the transcript or let a session change its own guard.`);
 };
@@ -403,7 +418,13 @@ async function harden() {
 
   fs.mkdirSync(HARDENED_HOME, { recursive: true, mode: 0o755 });
   // Agents and devices from the personal install move over, so hardening does not mean pairing again.
-  const personal = statePaths(path.join(process.env.SUDO_USER ? `/home/${process.env.SUDO_USER}` : homedir(), ".sayso"));
+  const invokingHome = () => {
+    if (!process.env.SUDO_USER) die("run this through sudo from your own account, so sayso can find your personal install");
+    const home = spawnSync("getent", ["passwd", process.env.SUDO_USER], { encoding: "utf8" }).stdout?.split(":")[5];
+    if (!home) die(`could not find the home folder of ${process.env.SUDO_USER}`);
+    return home;
+  };
+  const personal = statePaths(path.join(invokingHome(), ".sayso"));
   for (const name of ["agents", "keys", "policy", "config"]) {
     if (fs.existsSync(personal[name])) fs.copyFileSync(personal[name], statePaths(HARDENED_HOME)[name]);
   }
@@ -461,7 +482,7 @@ WantedBy=multi-user.target
     ];
   fs.writeFileSync(managedFile, `${JSON.stringify(managed, null, 2)}\n`, { mode: 0o644 });
 
-  const personalSettings = path.join(process.env.SUDO_USER ? `/home/${process.env.SUDO_USER}` : homedir(), ".claude", "settings.json");
+  const personalSettings = path.join(invokingHome(), ".claude", "settings.json");
   if (fs.existsSync(personalSettings)) {
     const settings = JSON.parse(fs.readFileSync(personalSettings, "utf8"));
     removeOurHooks(settings);

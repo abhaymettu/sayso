@@ -41,9 +41,10 @@ A session reads repositories and web pages too, and in bypass mode it can run an
 | It reads every file in the state folder looking for a way to say yes | There is none. No private key and no agent token is stored, only public keys and token hashes. |
 | It talks to the hook socket and sends `approve` | That door has no such verb. It can open requests and report events, never answer them. |
 | It curls the agent port, or reads, edits or kills sayso | The call is classified `self`, and that always needs you. |
-| It runs `sayso policy trusted-agent` | Classified `self`, and the CLI refuses inside a session. |
+| It runs `sayso policy trusted-agent` | Classified `self`, and the CLI refuses when the session's variables are set or a `claude` process is among its ancestors. |
 | It hides the danger with escape codes, bidi overrides, zero-width or tag characters, or hundreds of spaces | They are shown as visible marks, a warning is raised, and the request goes to you whatever the policy says. |
 | It floods the queue | Eight pending requests per session, then the next is denied. |
+| It reports that a tool finished, to let go of its own dialog hold | The hold ends and your agent can no longer answer it. The dialog stays on screen for the keyboard, and nothing runs from this. |
 
 **Where this stops.** In a default install the session runs as you, and sayso's files are yours. A session determined to
 remove the gate can obfuscate its way past the classifier and edit your settings or swap the public key. The default
@@ -60,6 +61,7 @@ Nothing short of a sandbox sees everything. These are not caught, in any install
 - two-stage attacks: write a script, then run it
 - code built from strings at run time
 - programs with their own execute options, such as `sed e` or `rsync -e`
+- ordinary writes: overwriting a file with new content looks like normal work, whether it comes from `>` or the Write tool
 
 The classifier exists so that a tired model's `rm -rf` reaches a person. If you need to contain a hostile process, use
 Claude Code's sandbox or a VM as well.
