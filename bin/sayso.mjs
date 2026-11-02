@@ -533,7 +533,7 @@ function printRequests(requests) {
   for (const r of requests) console.log(`${r.id}  ${r.untrusted.session}  ${r.risk}  approver:${r.approver}  until ${r.expires_at}\n  ${r.untrusted.action.split("\n").join("\n  ")}`);
 }
 
-const USAGE = `sayso: your agent can see your Claude Code sessions and answer them. Nothing destructive runs without your say-so.
+const USAGE = `sayso: your agent can see your Claude Code sessions and answer them. Commands that look destructive wait for your yes.
 
   sayso setup [--agent NAME] [--no-pair]    install the hooks, start the daemon
   sayso agent add NAME | list | revoke NAME connect a personal agent
