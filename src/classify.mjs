@@ -1849,7 +1849,7 @@ function braceWords(arg) {
 }
 
 const HOME_SPELLED = /^(?:\$\{HOME\b[^}]*\}|~-?)(?=\/|$)/;
-const WHOLE_AT_RUN_TIME = /^(?:\$\(.*\)|`.*`|\$\{[^}]*\}|\$\w+)\/*\*?$/s;
+const WHOLE_AT_RUN_TIME = /^(?:\$\(.*\)|`.*`|\$\{[^}]*\}|\$\w+|\$[@*])\/*\*?$/s;
 
 /** Whether a target could be the home folder or a system root once the shell has expanded it. A word with nothing literal in it, or a glob under one, counts too when `wide`, for a call that is held either way. */
 function couldBeRoot(target, st, wide = false) {

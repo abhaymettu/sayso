@@ -787,7 +787,7 @@ describe("what the person reads", () => {
 describe("the routes the final review found", () => {
   const gatePid = (rig) => Number(spawnSync("pgrep", ["-f", `${rig.home}/app/src/hook.mjs gate`], { encoding: "utf8" }).stdout.trim().split("\n")[0]);
 
-  test("SIGUSR1 can't open an inspector on the gate: the flag is on it and the signal ends the hold in a block", () =>
+  test("SIGUSR1 can't open an inspector on the gate: the flag is on it, and the hold goes on", () =>
     withRig({}, [RM, FINISH], async (rig) => {
       const session = rig.headless();
       const request = await rig.nextRequest();

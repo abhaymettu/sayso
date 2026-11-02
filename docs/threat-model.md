@@ -77,13 +77,22 @@ shell ignore `SHELLOPTS`, `BASHOPTS`, `BASH_ENV`, `ENV` and exported functions, 
 environment, so `PATH`, `NODE_OPTIONS`, `PS4` and `SAYSO_*` are gone before anything reads them. The family is tested on the
 real binary with `/bin/sh` as macOS's bash 3.2, Linux's dash and Linux's bash 5.2, on both install routes where each applies.
 
+That same `env` also reaches the commands a session runs, and those are past the gate. With bash as the session's shell,
+`BASH_ENV`, or `SHELLOPTS=xtrace` with a command in `PS4`, runs the repository's code inside a plain `echo hello` the gate rightly
+let through. With zsh, `ZDOTDIR` does the same through a `.zshenv`. `PATH`, `NODE_OPTIONS`, `GIT_SSH_COMMAND` and their kin do it to
+each program that reads them, so no list closes this. sayso doesn't hold on them, because a repository that can write settings can
+already run anything with `hooks`, and a hold on one route would suggest otherwise. Treat running `claude` in a folder as trusting
+its settings, and run `sayso doctor` there first, which names everything in a project's `env`.
+
 `sudo sayso harden` (Linux with systemd) makes it a lock. The daemon runs as its own user, the keys, policy and audit log
 belong to that user, the code belongs to root, and the hooks go in Claude Code's managed settings, which neither user nor
 project settings can remove. So `disableAllHooks`, `--bare` and the plugin switch stop mattering. Managed `env` also blanks
 `LD_PRELOAD`, `LD_AUDIT` and `LD_LIBRARY_PATH`, which is what closes the loader route on Linux: `test/harden.mjs` shows the same
 library held once hardened. It blanks `SHELLOPTS`, `BASHOPTS`, `BASH_ENV`, `ENV`, `PS4` and `CLAUDE_CODE_SHELL_PREFIX` as a
-second layer. `PATH` and `IFS` stay, because blanking the first would break your tools and the hook doesn't use either. A
-repository's own `hooks` still run beside the managed ones. The owner's socket is closed to the session's account, so a
+second layer, and `ZDOTDIR` as well, so those can't reach a session's commands either. `test/harden.mjs` shows each of them stop
+there. A blank `ZDOTDIR` also means a session's zsh doesn't read the startup files in your home. `PATH`, `IFS` and `NODE_OPTIONS` stay,
+because blanking them would break your tools and the hook doesn't use them, so they still reach what a session runs. A
+repository's own `hooks` still run beside the managed ones, and they run as you, though they can't touch the gate. The owner's socket is closed to the session's account, so a
 session running as you can no longer rewrite the keys or stop the daemon. The other socket is open to every local account, because hooks run as whoever runs
 Claude Code: any of them can open requests and report events, which can deny things and clutter the log, and can't run
 anything.

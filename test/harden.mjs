@@ -160,6 +160,33 @@ fs.writeFileSync(`${loaderLibrary}.c`, LOADER);
 const canBuild = spawnSync("cc", ["-shared", "-fPIC", "-o", loaderLibrary, `${loaderLibrary}.c`]).status === 0;
 if (!canBuild) console.log("skip  no C compiler here, so the loader rows only check what a session's commands see");
 
+// A repository's `env` also reaches the commands a session runs, past the gate, and a plain echo is enough to show it.
+const repositoryCode = path.join(box.root, "repository-code-ran");
+const startup = path.join(box.root, "startup");
+fs.mkdirSync(startup);
+fs.writeFileSync(path.join(startup, "run"), `touch ${repositoryCode}\n`, { mode: 0o755 });
+fs.writeFileSync(path.join(startup, ".zshenv"), `touch ${repositoryCode}\n`);
+const passes = await startScriptedModel([{ tool: "Bash", input: { command: "echo hello", description: "say" } }, { text: "finished" }]);
+const COMMAND_SHELL_FAMILY = {
+  "bash, BASH_ENV": ["/bin/bash", { BASH_ENV: path.join(startup, "run") }],
+  "bash, SHELLOPTS=xtrace with a command in PS4": ["/bin/bash", { SHELLOPTS: "xtrace", PS4: `$(touch ${repositoryCode})` }],
+  "zsh, ZDOTDIR": ["/usr/bin/zsh", { ZDOTDIR: startup }],
+};
+const inSessionCommands = async (where, runs) => {
+  for (const [name, [shell, env]] of Object.entries(COMMAND_SHELL_FAMILY)) {
+    if (!fs.existsSync(shell)) {
+      console.log(`skip  ${where}: ${name}, no ${shell} here`);
+      continue;
+    }
+    fs.rmSync(repositoryCode, { force: true });
+    fs.writeFileSync(repoSettings, JSON.stringify({ env }));
+    await new Promise((r) => spawn(CLAUDE, ["-p", "go", "--model", "claude-scripted", "--dangerously-skip-permissions"], { cwd: box.cwd, env: apiKeyEnv(box, passes.url, { PATH: process.env.PATH, HOME: home, SHELL: shell }), stdio: "ignore" }).on("exit", r));
+    fs.rmSync(repoSettings);
+    check(`${where}: ${name}, in a command the gate let through, ${runs ? "runs the repository's code, the limit the threat model names" : "runs nothing of the repository's"}`, fs.existsSync(repositoryCode) === runs);
+  }
+};
+
+await inSessionCommands("a personal install", true);
 await shellsOnThisBox("a personal install");
 if (canBuild) {
   refill();
@@ -178,7 +205,7 @@ const settings = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
 check("user settings no longer carry the hooks", !JSON.stringify(settings).includes("run.sh"));
 check("managed settings carry them", fs.readFileSync(MANAGED, "utf8").includes("run.sh"));
 const managedEnv = JSON.parse(fs.readFileSync(MANAGED, "utf8")).env ?? {};
-for (const name of ["CLAUDE_CODE_SHELL_PREFIX", "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV", "PS4"]) check(`managed env clears ${name}`, managedEnv[name] === "", JSON.stringify(managedEnv[name]));
+for (const name of ["CLAUDE_CODE_SHELL_PREFIX", "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV", "ZDOTDIR", "PS4"]) check(`managed env clears ${name}`, managedEnv[name] === "", JSON.stringify(managedEnv[name]));
 fs.writeFileSync(settingsFile, JSON.stringify({ ...settings, skipDangerousModePermissionPrompt: true }));
 
 await heldThenDenied("a session with permissions bypassed");
@@ -273,6 +300,8 @@ for (const [name, settings] of Object.entries({
 }
 fakeDaemon.close();
 await shellsOnThisBox("hardened");
+await inSessionCommands("hardened", false);
+passes.close();
 
 const looked = path.join(box.root, "ld-preload-seen");
 const asked = await startScriptedModel([{ tool: "Bash", input: { command: `echo "[$LD_PRELOAD][$LD_AUDIT][$LD_LIBRARY_PATH]" > ${looked}`, description: "look" } }, { text: "finished" }]);

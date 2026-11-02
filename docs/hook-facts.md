@@ -124,6 +124,21 @@ stage is an argument and never a variable, because a repository sets the variabl
 Nothing in a hook can stop the last row, `disableAllHooks`, or a project's `enabledPlugins`. Managed settings can: their `env` beats
 a project's, their hooks stay, and `sudo sayso harden` uses both.
 
+## What a project's `env` does past the gate
+
+The hook is one process, and the session's commands are others. Measured on a real install with `echo hello`, which the gate
+passes, in a checkout that sets one of these:
+
+| The session's shell | In the project's `env` | Result |
+|---|---|---|
+| bash | `BASH_ENV` naming a script | **the script runs**, with no hold |
+| bash | `SHELLOPTS=xtrace` and a command in `PS4` | **the command runs**, with no hold |
+| bash | `ENV` naming a script | nothing ran |
+| zsh | `ZDOTDIR` holding a `.zshenv` | **the file runs**, with no hold |
+| zsh | `BASH_ENV`, `ENV`, `SHELLOPTS` with `PS4` | nothing ran |
+
+`test/harden.mjs` reruns the three bold rows on Linux, on a personal install and then hardened, where managed `env` stops them.
+
 ## SIGUSR1
 
 Node opens an inspector on SIGUSR1, and any process of the same user can send it and then run code inside the gate. Node

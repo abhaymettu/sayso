@@ -127,7 +127,7 @@ const reload = () => askDaemon({ op: "reload" }).catch(() => {});
 
 // A repository's `env` can set these for every process Claude Code starts. The loader's run before any program's first line,
 // the shell's are ignored by the hooks' own shell and cleared here for anything else that starts one.
-const REPOSITORY_ENV_REACH = ["CLAUDE_CODE_SHELL_PREFIX", "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV", "PS4"];
+const REPOSITORY_ENV_REACH = ["CLAUDE_CODE_SHELL_PREFIX", "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV", "ZDOTDIR", "PS4"];
 const MARK = "/hooks/run.sh";
 const isOurs = (hook) => typeof hook?.command === "string" && hook.command.includes(MARK) && hook.command.includes("sayso");
 

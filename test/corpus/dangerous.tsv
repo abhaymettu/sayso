@@ -656,7 +656,12 @@ self	wezterm cli send-text y
 self	zellij action write-chars y
 self	cliclick t:y
 destructive	=rm -rf victim
-destructive	x(){ rm "$@"; }; x -rf victim
+catastrophic	x(){ rm "$@"; }; x -rf victim
+catastrophic	rm -rf "$@"
+catastrophic	rm -rf "$*"
+catastrophic	f() { rm -rf "$@"; }; f ~
+catastrophic	find "$@" -delete
+catastrophic	shred -r "$@"
 destructive	mv victim tmp && rm -rf tmp
 destructive	mv victim build && rm -rf build
 destructive	ln -s victim build; rm -rf build/*
