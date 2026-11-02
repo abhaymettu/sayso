@@ -295,6 +295,7 @@ describe("the terminal", () => {
       const t = await start(rig);
       await t.waitFor(/Do you want to proceed/);
       await rig.nextRequest();
+      await sleep(1000);
       t.keys("Escape");
       await waitUntil(async () => (await rig.tool("list_requests")).requests.length === 0, 8000, "the request to clear");
       assert.equal(rig.destroyed(), false);

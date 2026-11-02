@@ -240,7 +240,7 @@ npm run test:smoke   # one install, one held rm -rf, a few seconds
 npm run test:unit    # classifier corpus and logic
 npm run test:e2e     # the real Claude Code binary, end to end, with attacks
 npm run test:sdk     # a session hosted through the Agent SDK
-npm run test:live    # a real model as the agent, needs a logged-in claude, under a cent a run on Haiku
+npm run test:live    # a real model as the agent, needs a logged-in claude, 1.3 cents a run on Haiku
 npm run bench        # latency, writes bench/results.json
 node test/probe-hooks.mjs   # the hook facts, on your Claude Code version
 npx -y -p playwright@1.64.1 node test/page/verify-page.mjs   # the approval page in three browsers
