@@ -15,6 +15,7 @@
     "test:unit": "node --test test/unit.test.mjs test/classify.test.mjs",
     "test:e2e": "node --test --test-timeout=120000 --test-concurrency=2 test/e2e.test.mjs test/attacks.test.mjs test/plugin.test.mjs",
     "test:live": "node test/live.mjs",
+    "test:tunnel": "node test/tunnel.mjs",
     "bench": "node bench/latency.mjs",
     "test:smoke": "node test/smoke.mjs",
     "test:sdk": "npm i --no-save --omit=optional --no-audit --no-fund @anthropic-ai/claude-agent-sdk@0.3.316 && node test/sdk-host.mjs",
