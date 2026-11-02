@@ -232,6 +232,8 @@ describe("the terminal", () => {
       const t = await start(rig);
       await t.waitFor(/Do you want to proceed/);
       await rig.nextRequest();
+      // A dialog that has only just appeared drops an Enter, with Yes selected and nothing run.
+      await sleep(1000);
       t.keys("Enter");
       await t.waitFor(/finished/);
       assert.equal(rig.destroyed(), true);
@@ -245,8 +247,8 @@ describe("the terminal", () => {
       await t.waitFor(/Do you want to proceed/);
       await rig.nextRequest();
       t.keys("Down");
-      // Sent together, the dialog can take the Down and drop the Enter.
       await t.waitFor(/❯ 2\. No/);
+      await sleep(1000);
       t.keys("Enter");
       await waitUntil(async () => (await rig.tool("list_requests", { status: "all" })).requests.find((r) => r.status === "cancelled"), 5000, "the hold to be cancelled");
       assert.equal(rig.destroyed(), false);
