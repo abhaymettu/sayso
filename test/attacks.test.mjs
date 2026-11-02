@@ -134,6 +134,27 @@ describe("a prompt-injected agent", () => {
       await session.done;
     }));
 
+  test("killing the hook's own wrapper during a hold blocks the call", () =>
+    withRig({}, [RM, FINISH], async (rig) => {
+      const session = rig.headless();
+      await rig.nextRequest();
+      assert.equal(spawnSync("pkill", ["-KILL", "-f", `${rig.root}.*run\\.sh.* gate`]).status, 0, "the wrapper should be running");
+      await session.done;
+      assert.equal(rig.destroyed(), false);
+    }));
+
+  test("an Edit shows the person the change, not only the file", () =>
+    withRig({}, [FINISH], async (rig) => {
+      await rig.model([{ tool: "Edit", input: { file_path: path.join(rig.home, "policy.json"), old_string: "strict", new_string: "trusted-agent" } }, FINISH]);
+      const session = rig.headless();
+      const request = await rig.nextRequest();
+      assert.match(request.untrusted.action, /strict[\s\S]*trusted-agent/);
+      const { approval_url: url } = await rig.tool("approve", { request_id: request.id });
+      assert.match(Buffer.from(new URL(url).hash.slice(3), "base64url").toString(), /strict[\s\S]*trusted-agent/);
+      await rig.tool("deny", { request_id: request.id });
+      await session.done;
+    }));
+
   test("a broken policy file falls back to strict", () =>
     withRig({}, [RM, FINISH], async (rig) => {
       fs.writeFileSync(path.join(rig.home, "policy.json"), '{"preset": "trusted-agent", ');

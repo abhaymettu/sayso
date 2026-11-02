@@ -37,8 +37,12 @@ const clip = (text, limit = 2000) => forDisplay(text, limit).text;
 function summarizeInput(tool, input) {
   if (!input || typeof input !== "object") return "";
   if (typeof input.command === "string") return input.command;
-  if (typeof input.file_path === "string") return input.file_path + (typeof input.content === "string" ? `\n\n${input.content}` : "");
-  if (typeof input.notebook_path === "string") return input.notebook_path;
+  if (typeof input.file_path === "string") {
+    if (typeof input.content === "string") return `${input.file_path}\n\n${input.content}`;
+    if (typeof input.new_string === "string") return `${input.file_path}\n\nreplace:\n${input.old_string}\n\nwith:\n${input.new_string}`;
+    return input.edits ? `${input.file_path}\n\n${JSON.stringify(input.edits)}` : input.file_path;
+  }
+  if (typeof input.notebook_path === "string") return `${input.notebook_path}\n\n${input.new_source ?? ""}`.trimEnd();
   if (typeof input.plan === "string") return input.plan;
   if (typeof input.url === "string") return input.url;
   return JSON.stringify(input);
@@ -235,7 +239,8 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
   function deny(id, actor, reason) {
     const { request: r, error } = pendingRequest(id);
     if (error) return error;
-    const said = reason ? ` (${clip(reason, 200)})` : "";
+    // The session's model reads this. Under a policy with messages off, an injected agent must not be able to speak to it here.
+    const said = reason && state.policy.messages ? ` (${clip(reason, 200)})` : "";
     settle(r, "denied", actor, { decision: "deny", reason: `sayso: denied by ${actor.name}${said}. Do not try an equivalent command. Tell the user what you wanted to do.` }, reason ? { reason: redact(reason).slice(0, 200) } : {});
     return { status: "denied", request: view(r) };
   }

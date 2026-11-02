@@ -56,7 +56,9 @@ describe("bypass mode, headless", () => {
       assert.equal((await rig.tool("deny", { request_id: request.id, reason: "not today" })).status, "denied");
       await session.done;
       assert.equal(rig.destroyed(), false);
-      assert.match(rig.scripted.seen.toolResults[0], /denied by test-agent \(not today\)/);
+      assert.match(rig.scripted.seen.toolResults[0], /denied by test-agent\./);
+      assert.doesNotMatch(rig.scripted.seen.toolResults[0], /not today/, "with messages off, a reason must not reach the session");
+      assert.equal(rig.audit().at(-1).reason, "not today");
     }));
 
   test("no answer means no", () =>

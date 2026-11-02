@@ -1,8 +1,8 @@
 {
   "description": "sayso: holds risky tool calls until your agent or you answer, in every permission mode.",
   "hooks": {
-    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" gate", "timeout": 3600, "statusMessage": "sayso: waiting for your say-so (Esc to cancel)" }] }],
-    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" gate", "timeout": 3600 }] }],
+    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" gate", "timeout": 3600, "onFailure": "block", "statusMessage": "sayso: waiting for your say-so (Esc to cancel)" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" gate", "timeout": 3600, "onFailure": "block" }] }],
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" report", "async": true }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" report", "async": true }] }],
     "PostToolUse": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" report", "async": true }] }],
