@@ -54,6 +54,10 @@ parallel tool call could still try. See [the threat model](threat-model.md).
 - The dialog stays up while a PermissionRequest hook holds, and the hook's answer closes it. So the keyboard and a
   remote answer can race, and whichever comes first wins. sayso uses exactly this at a terminal.
 - In headless mode `ask` runs nothing and fires no PermissionRequest, which is why sayso holds at PreToolUse there.
+- A keyboard no or Esc kills the PermissionRequest hook. A keyboard yes does not: the hook keeps running until it finishes
+  on its own. Its input has no `tool_use_id`, so sayso matches the PostToolUse that follows by session, tool and input hash,
+  and lets go of the hold.
+- Claude Code refuses a Bash command holding terminal control characters before any hook sees it.
 
 ## Questions and idle sessions
 

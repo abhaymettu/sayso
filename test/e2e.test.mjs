@@ -228,7 +228,17 @@ describe("the terminal", () => {
       await t.waitFor(/finished/);
       assert.equal(rig.destroyed(), true);
       const request = await waitUntil(async () => (await rig.tool("list_requests", { status: "all" })).requests.find((r) => r.status === "cancelled"), 5000, "the hold to be cancelled");
-      assert.equal(request.decided_by.type, "system");
+      assert.deepEqual(request.decided_by, { type: "session", name: "answered at the terminal" });
+    }));
+
+  test("bypass: a keyboard no runs nothing and ends the hold", () =>
+    withRig({}, [RM, FINISH], async (rig) => {
+      const t = await start(rig);
+      await t.waitFor(/Do you want to proceed/);
+      await rig.nextRequest();
+      t.keys("Down", "Enter");
+      await waitUntil(async () => (await rig.tool("list_requests", { status: "all" })).requests.find((r) => r.status === "cancelled"), 5000, "the hold to be cancelled");
+      assert.equal(rig.destroyed(), false);
     }));
 
   test("bypass: no answer closes the dialog with a no", () =>

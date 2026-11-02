@@ -2,6 +2,7 @@
 // Runs inside every Claude Code hook. Claude Code treats a crash, a kill or a timeout here as "carry on" and runs the
 // tool, so hooks/run.sh turns any non-zero exit into a block, and every path below must end in an explicit answer.
 import { spawn, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import { homedir } from "node:os";
@@ -176,7 +177,8 @@ async function gate(input) {
   // PermissionRequest: the dialog is on screen while this waits, and whichever answer comes first wins.
   const kind = tool === "AskUserQuestion" ? "question" : tool === "ExitPlanMode" ? "plan" : verdict ? "tool" : "prompt";
   const risk = kind === "question" ? "question" : kind === "plan" ? "plan" : (verdict?.risk ?? "prompt");
-  const answer = await holdAtDaemon({ ...sessionFields(input), attended: isAttended(), kind, risk, why: verdict?.why ?? [], tool, input: input.tool_input });
+  const answer = await holdAtDaemon({ ...sessionFields(input), attended: isAttended(), dialog: true, kind, risk, why: verdict?.why ?? [], tool, input: input.tool_input });
+  if (answer.decision === "closed") process.exit(0);
   if (answer.decision === "allow") permissionRequest({ behavior: "allow" });
   if (answer.decision === "answer") permissionRequest({ behavior: "allow", updatedInput: answer.updatedInput });
   if (answer.decision === "deny" && !answer.failure) permissionRequest({ behavior: "deny", message: answer.reason ?? "sayso: denied" });
@@ -198,6 +200,8 @@ async function reportEvent(input) {
       notification_type: input.notification_type,
       last_assistant_message: input.last_assistant_message,
       error_message: input.error_message ?? input.error,
+      tool_name: input.tool_name,
+      input_sha256: input.tool_input === undefined ? undefined : crypto.createHash("sha256").update(JSON.stringify(input.tool_input)).digest("hex"),
     })}\n`,
     () => process.exit(0),
   );

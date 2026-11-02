@@ -100,6 +100,14 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     if (event === "Stop" && input.last_assistant_message) s.last_message = clip(input.last_assistant_message);
     const next = event === "Notification" ? NOTIFICATION_STATE[input.notification_type] : SESSION_STATE[event];
     if (next) setState(s, next, event === "StopFailure" ? { error: clip(input.error_message ?? input.error ?? "", 300) } : {});
+    if (event === "PostToolUse" || event === "PostToolUseFailure") closeAnsweredDialog(input);
+  }
+
+  // Claude Code leaves a PermissionRequest hook running after a keyboard yes, so the tool finishing is the only sign the
+  // dialog is gone. This comes from the session, so it can only let go of a hold, leaving any dialog to the keyboard.
+  function closeAnsweredDialog({ session_id, tool_name, input_sha256 }) {
+    const held = [...requests.values()].find((r) => r.dialog && r.status === "pending" && r.session_id === session_id && r.tool === tool_name && r.input_sha256 === input_sha256);
+    if (held) settle(held, "cancelled", { type: "session", name: "answered at the terminal" }, { decision: "closed" });
   }
 
   function checkLiveness(isAlive) {
@@ -115,7 +123,7 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     }));
   }
 
-  function openRequest({ session_id, cwd, kind, risk, why, tool, input, permission_mode, attended, pid, entrypoint, onDecision }) {
+  function openRequest({ session_id, cwd, kind, risk, why, tool, input, permission_mode, attended, dialog, pid, entrypoint, onDecision }) {
     const s = touchSession(session_id, { cwd, permission_mode, attended, pid, entrypoint });
     const pendingHere = [...requests.values()].filter((r) => r.session_id === session_id && r.status === "pending").length;
     if (pendingHere >= MAX_PENDING_PER_SESSION) return onDecision({ decision: "deny", reason: "too many requests pending for this session" });
@@ -130,6 +138,7 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
       session: sessionName(s),
       cwd,
       kind,
+      dialog: !!dialog,
       risk,
       why: why ?? [],
       tool,
