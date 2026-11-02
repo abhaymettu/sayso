@@ -42,7 +42,8 @@ claude plugin marketplace add abhaymettu/sayso
 claude plugin install sayso@sayso
 ```
 
-Run `/sayso:setup` in a session after that. Needs Node 20 or newer and Claude Code, on macOS or Linux.
+Run `/sayso:setup` in a session after that. Needs Node 20 or newer and Claude Code, on macOS or Linux. The plugin looks for
+Node in the usual install locations rather than your `PATH`, and if it can't find it, every call blocks and says why.
 
 To see it work first, clone the repo and run `npm run test:smoke`. It installs into a temp folder and takes a real session
 through a held `rm -rf`, against a scripted model, so it needs no account. It proves the gate and the signature check on
@@ -90,7 +91,12 @@ call that touches it is classified as `self`, and the command refuses to run the
 | Catastrophic, like `dd of=/dev/disk0` | you | you, and no policy file can change this |
 | Touching sayso itself | you | you, and no policy file can change this |
 
-Any flagged call with hidden characters, or too long to show in full, goes to you whatever the policy says.
+Any flagged call with hidden characters, a part hidden as a possible secret, something the classifier couldn't finish
+reading, or too much to show in full goes to you whatever the policy says.
+
+An MCP tool whose name says it runs or writes things is held by name, and its arguments are read like a command. If you
+trust one, add it to the policy, as in `"trust_tools": ["mcp__myserver__run_*"]`. That drops the hold on the name only, and a
+dangerous argument still gets held.
 
 If you are at the terminal when it happens, the normal Claude Code dialog appears, even in bypass mode, and the keyboard
 and your agent race. Whichever answers first wins.
@@ -171,12 +177,15 @@ obvious routes. Think seatbelt.
 It also covers only the sessions it is installed for. A session under another `CLAUDE_CONFIG_DIR` has no gate. Neither does
 one you start with `--bare`, `--safe-mode` or `--setting-sources` without `user`, or an Agent SDK host with
 `settingSources: []`, since those skip user hooks. Claude Code's docs say `--bare` will become the default for `-p`, which
-would take `claude -p` out of a default install.
+would take `claude -p` out of a default install. A repository's own settings can also switch a default install off, with
+`disableAllHooks` or `CLAUDE_CODE_SHELL_PREFIX`, and no code of mine runs to stop that. `sayso doctor` warns when it finds them
+in the current folder.
 
 `sudo sayso harden`, on Linux with systemd, locks the gate in place. The daemon runs as its own user, and the hooks move to
-Claude Code's managed settings, which user settings can't remove. A session running as you can no longer change the keys or
-stop the daemon, and `--bare`, `--safe-mode` and `disableAllHooks` don't skip the hooks. `test/harden.mjs` attacks all of that
-on a throwaway box. It doesn't change what the classifier recognises, and there is no macOS version yet.
+Claude Code's managed settings, which user settings can't remove. A session running as you can no longer change the keys,
+reach the owner's socket or stop the daemon, and `--bare`, `--safe-mode`, `disableAllHooks` and a project's settings don't
+skip the hooks. `sayso status` and `sayso deny` need `sudo` there. `test/harden.mjs` attacks all of that on a throwaway box. It
+doesn't change what the classifier recognises, and there is no macOS version yet.
 
 The approval page is the root of trust, since your phone signs what it shows. It is static, short enough to read, and its
 own security policy forbids network connections. The hosted copy shares its origin with the other Pages sites on my GitHub
@@ -184,9 +193,10 @@ account, so to trust less, serve `docs/` yourself and run `sayso pair --page htt
 stored one, approving takes a hold and no biometric, and pairing makes it on your computer. A passkey would be stronger, and
 some of the tools below use one.
 
-Claude Code's hooks fail open by default: if one crashes or gets killed, the command runs. sayso sets `onFailure: "block"`
-and wraps the gate so that a failure blocks instead. [What Claude Code hooks actually do](docs/hook-facts.md) has the
-measurements.
+Claude Code's hooks fail open by default: if one crashes or gets killed, the command runs. sayso sets `onFailure: "block"`,
+gives the gate clocks of its own, and wraps it so that a failure blocks instead. I tested that on Claude Code 2.1.303, and on
+an older version a hook timeout or a killed wrapper may still let the tool run. `sayso doctor` warns about those.
+[What Claude Code hooks actually do](docs/hook-facts.md) has the measurements.
 
 ## Other tools
 
