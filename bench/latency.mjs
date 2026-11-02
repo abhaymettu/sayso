@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // How long from "a session needs input" to "the agent knows", measured on the real binary.
-// T0 is the moment the scripted model finishes handing Claude Code the tool call. T1 is when each transport hands the
+// T0 is the moment the scripted model starts handing Claude Code the tool call. T1 is when each transport hands the
 // event to a client in this same process, so both ends share one clock.
 // Usage: node bench/latency.mjs [--runs 100] [--overhead-runs 40]
 import { spawn } from "node:child_process";
@@ -103,12 +103,13 @@ async function told() {
   return Object.fromEntries(Object.entries(samples).map(([k, v]) => [k, summary(v)]));
 }
 
-// What the gate costs every ordinary tool call: tool emitted to its result coming back, with and without sayso.
+// What the gate costs every ordinary tool call: tool emitted to its result coming back, with and without sayso. The two
+// sides alternate so that drifting machine load falls on both.
 async function overhead() {
-  const measure = async (withSayso) => {
+  const side = async (withSayso) => {
     const rig = new Rig();
     if (withSayso) await rig.install();
-    else fs.writeFileSync(path.join(rig.config, "settings.json"), "{}");
+    else fs.writeFileSync(path.join(rig.config, "settings.json"), JSON.stringify({ skipDangerousModePermissionPrompt: true }));
     const times = [];
     let t0 = 0;
     const steps = [];
@@ -117,19 +118,32 @@ async function overhead() {
     const model = await startScriptedModel(steps, {
       onToolEmitted: (_s, t) => (t0 = t),
       onRequest: (body) => {
-        const last = body.messages?.at(-1);
+        if (!body.tools?.length) return;
+        const last = body.messages?.filter((m) => m.role === "user").at(-1);
         if (t0 && Array.isArray(last?.content) && last.content.some((c) => c.type === "tool_result")) times.push(performance.now() - t0);
       },
     });
-    for (let i = 0; i < OVERHEAD_RUNS; i++) {
+    let failures = 0;
+    const once = async () => {
       const child = spawn(CLAUDE, ["-p", "go", "--model", "claude-scripted", "--dangerously-skip-permissions"], { cwd: rig.cwd, env: apiKeyEnv(rig, model.url, rig.env()), stdio: "ignore" });
-      await new Promise((r) => child.on("exit", r));
-    }
-    model.close();
-    if (withSayso) await rig.close();
-    return summary(times);
+      const code = await new Promise((r) => child.on("exit", r));
+      if (code !== 0) failures++;
+    };
+    const close = async () => {
+      model.close();
+      if (withSayso) await rig.close();
+      else fs.rmSync(rig.root, { recursive: true, force: true });
+      return { ...summary(times), failed_runs: failures };
+    };
+    return { once, close };
   };
-  return { without_sayso: await measure(false), with_sayso: await measure(true) };
+  const without = await side(false);
+  const withIt = await side(true);
+  for (let i = 0; i < OVERHEAD_RUNS; i++) {
+    await without.once();
+    await withIt.once();
+  }
+  return { without_sayso: await without.close(), with_sayso: await withIt.close() };
 }
 
 function hookAlone() {
@@ -161,9 +175,11 @@ const out = {
     c.on("exit", () => resolve(v.trim()));
   })),
   unit: "milliseconds",
+  load_average_at_start: os.loadavg()[0],
   session_needs_input_to_agent_told: await told(),
   gate_on_an_ordinary_command_alone: await hookAlone(),
   tool_round_trip: await overhead(),
+  load_average_at_end: os.loadavg()[0],
   wall_seconds: Math.round((Date.now() - started) / 1000),
 };
 fs.writeFileSync(path.join(here, "results.json"), `${JSON.stringify(out, null, 2)}\n`);
