@@ -220,8 +220,8 @@ version older than 2.1.303, the one this was measured on.
   session writing to any of those paths is flagged, but a default install can't stop a session that gets past that. A
   hardened install's code belongs to root.
 - **`trust_tools` in your policy.** It tells sayso a tool's name is not a reason to hold, and nothing else. Its arguments are
-  still read, so nothing protects you from danger in a key the rules don't read. A rule has to name a whole server or one
-  tool, as in `mcp__server__*` or `mcp__server__tool`. A wildcard can't reach across servers, anything else is ignored, and
+  still read, so nothing protects you from danger in a key the rules don't read. A rule has to spell out the server's whole
+  name, as in `mcp__server__*`, `mcp__server__run_*` or `mcp__server__tool`. A wildcard can't reach across servers, anything else is ignored, and
   `sayso doctor` says so and lists what is trusted.
 - **Your terminal.** A dialog on it is answered by whoever can send it keys.
 
