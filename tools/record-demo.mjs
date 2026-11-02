@@ -86,7 +86,7 @@ const videoStart = Date.now();
 await page.goto(`${pageUrl}#pair=${rig.device.pkcs8}&id=${rig.device.id}&name=${encodeURIComponent("my phone")}`);
 await page.getByRole("heading", { name: "This device is paired" }).waitFor();
 
-const t = rig.tui();
+const t = rig.tui(["--model", MODEL, "--dangerously-skip-permissions"]);
 const tmux = (...args) => spawnSync("tmux", ["-L", t.socket, ...args], { encoding: "utf8" });
 tmux("resize-window", "-t", "t", "-x", String(LEFT), "-y", String(ROWS));
 await t.waitFor(/bypass permissions|shortcuts/, 20000);

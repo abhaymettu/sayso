@@ -238,7 +238,10 @@ describe("the terminal", () => {
       const t = await start(rig);
       await t.waitFor(/Do you want to proceed/);
       await rig.nextRequest();
-      t.keys("Down", "Enter");
+      t.keys("Down");
+      // Sent together, the dialog can take the Down and drop the Enter.
+      await t.waitFor(/❯ 2\. No/);
+      t.keys("Enter");
       await waitUntil(async () => (await rig.tool("list_requests", { status: "all" })).requests.find((r) => r.status === "cancelled"), 5000, "the hold to be cancelled");
       assert.equal(rig.destroyed(), false);
     }));
