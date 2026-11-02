@@ -13,9 +13,10 @@
   "scripts": {
     "test": "node --test --test-timeout=120000 --test-concurrency=4 test/*.test.mjs",
     "test:unit": "node --test test/unit.test.mjs test/classify.test.mjs",
-    "test:e2e": "node --test --test-timeout=120000 --test-concurrency=2 test/e2e.test.mjs test/attacks.test.mjs",
+    "test:e2e": "node --test --test-timeout=120000 --test-concurrency=2 test/e2e.test.mjs test/attacks.test.mjs test/plugin.test.mjs",
     "test:live": "node test/live.mjs",
     "bench": "node bench/latency.mjs",
+    "test:smoke": "node test/smoke.mjs",
     "probe": "node test/probe-hooks.mjs"
   }
 }
