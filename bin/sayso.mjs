@@ -113,7 +113,6 @@ async function ensureDaemon(root = appRoot) {
 
 const reload = () => askDaemon({ op: "reload" }).catch(() => {});
 
-// ---- hooks in settings.json ----
 const MARK = "/hooks/run.sh";
 const isOurs = (hook) => typeof hook?.command === "string" && hook.command.includes(MARK) && hook.command.includes("sayso");
 
@@ -181,7 +180,6 @@ function linkCli(root) {
   }
 }
 
-// ---- agents ----
 function connectionInstructions(name, token) {
   const url = `http://127.0.0.1:${portOf()}/mcp`;
   return `Agent "${name}" added. This token is shown once; sayso keeps only its hash.
@@ -210,7 +208,6 @@ function addAgent(name) {
   return token;
 }
 
-// ---- pairing ----
 function renderQr(text) {
   const qr = qrcodegen.QrCode.encodeText(text, qrcodegen.QrCode.Ecc.LOW);
   const quiet = 2;
@@ -270,7 +267,6 @@ async function pair() {
   console.log(`Paired ${name} (key ${pairing.id}). Requests marked human can now be approved from it.`);
 }
 
-// ---- stdio bridge for MCP clients that only speak stdio ----
 async function mcpBridge() {
   const token = process.env.SAYSO_TOKEN;
   if (!token) die("set SAYSO_TOKEN to the token from `sayso agent add`");
@@ -295,7 +291,6 @@ async function mcpBridge() {
   rl.on("close", () => chain.finally(() => process.exit(0)));
 }
 
-// ---- diagnostics ----
 async function doctor() {
   const checks = [];
   const check = (ok, what, fix) => checks.push({ ok, what, fix });

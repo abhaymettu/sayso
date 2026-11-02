@@ -120,7 +120,7 @@ test('an adversarial command stays fast', () => {
 const toolCases = [
   ['Write', { file_path: '/Users/dev/.SAYSO/keys.json' }, 'self'],
   ['Read', { file_path: '/Users/dev/.SAYSO/keys.json' }, 'self'],
-  ['Write', { file_path: '/Users/dev/.claude-work/settings.json' }, 'self'],
+  ['Write', { file_path: '/Users/dev/.claude-work/main/settings.json' }, 'self'],
   ['Edit', { file_path: '/Users/dev/.claude-work/nested/settings.local.json' }, 'self'],
   ['Write', { file_path: '/Users/dev/.claude/notes.json' }, null],
   ['Grep', { pattern: 'x', path: '/Users/dev/.sayso' }, 'self'],

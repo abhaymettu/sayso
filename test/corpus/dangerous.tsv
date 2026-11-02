@@ -498,7 +498,7 @@ self	python3 -c "import glob;print(glob.glob('/Users/dev/.say*/keys.json'))"
 self	nc -U /tmp/SAYSO.sock
 self	nc -U /tmp/say*.sock
 self	nc -U /tmp/s?y?o.sock
-self	echo '{"disableAllHooks":true}' > ~/.claude-work/settings.json
+self	echo '{"disableAllHooks":true}' > ~/.claude-work/main/settings.json
 self	echo '{}' > ~/.claude-work/settings.json
 self	echo '{}' > ~/.claude-work/a/b/settings.local.json
 self	echo '{}' > $CLAUDE_CONFIG_DIR/settings.json
@@ -506,7 +506,7 @@ self	echo '{}' > ${CLAUDE_CONFIG_DIR:-x}/settings.json
 self	echo '{}' > ~/.CLAUDE/SETTINGS.JSON
 self	echo '{}' > ~/.clau*/settings.json
 self	echo '{}' > ~/.claude/set*.json
-self	cp x ~/.claude-work/settings.json
+self	cp x ~/.claude-work/alt/settings.json
 self	python3 -c "open('/Users/dev/.claude/settings.json','w').write('{}')"
 self	pkill -f hooks/run.sh
 self	pkill -f run.sh
@@ -618,7 +618,7 @@ destructive	tool ': > thesis.tex'
 destructive	rsync -a --delete empty/ ~/Documents/
 # Found while attacking the fix.
 self	mv ~/.claude ~/.claude-off
-self	mv ~/.claude-work /tmp/x
+self	mv ~/.claude-work/main /tmp/x
 self	sponge ~/.claude/settings.json
 self	systemctl stop sayso
 self	launchctl bootout gui/501/com.sayso.daemon
