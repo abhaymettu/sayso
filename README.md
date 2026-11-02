@@ -113,7 +113,8 @@ cloudflared tunnel --url http://127.0.0.1:7428
 sayso expose your-name.trycloudflare.com
 ```
 
-Any other `Host` header gets a 403, even with a good token. Hosted connectors that insist on OAuth won't work yet.
+Any other `Host` header gets a 403, even with a good token, and `npm run test:tunnel` checks this recipe against a real
+tunnel. Hosted connectors that insist on OAuth won't work yet.
 
 ## Works with
 
@@ -152,7 +153,8 @@ stops accidents, injected agents and the obvious routes. Think seatbelt.
 
 `sudo sayso harden`, on Linux with systemd, is the lock. The daemon runs as its own user, and the hooks move to Claude
 Code's managed settings, which user settings can't remove. A session running as you can no longer change the keys or stop
-the daemon. There is no macOS version yet.
+the daemon, and `--bare`, `--safe-mode` and `disableAllHooks` don't skip the hooks. `test/harden.mjs` attacks all of that on
+a throwaway box. There is no macOS version yet.
 
 The classifier also isn't a sandbox. It exists so that a tired model's `rm -rf` reaches a person. To contain a hostile
 process, use a VM.

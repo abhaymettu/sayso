@@ -71,4 +71,5 @@ parallel tool call could still try. See [the threat model](threat-model.md).
 ## What skips hooks
 
 Hooks in user settings do not run under `--bare`, `--safe-mode`, `disableAllHooks`, or the Agent SDK with
-`settingSources: []`, per Claude Code's documentation. Managed hooks do. `sudo sayso harden` uses managed hooks.
+`settingSources: []`, per Claude Code's documentation. `sudo sayso harden` uses managed hooks, and `test/harden.mjs` shows
+them still holding the call under `--bare`, `--safe-mode`, `--setting-sources project` and `disableAllHooks`.

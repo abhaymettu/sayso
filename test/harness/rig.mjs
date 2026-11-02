@@ -191,6 +191,6 @@ export class Rig {
     await this.askDaemon({ op: "shutdown" }).catch(() => {});
     openRigs.delete(this);
     await sleep(40);
-    fs.rmSync(this.root, { recursive: true, force: true });
+    fs.rmSync(this.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
