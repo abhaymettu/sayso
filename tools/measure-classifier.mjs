@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// Prints aggregates only. Transcripts are private, so command text reaches disk
-// only through --show-flagged with an explicit --out path.
 import { createReadStream, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -29,7 +27,6 @@ if (sampleSize > 0 && !options.out) {
   process.exit(2);
 }
 
-// With --against, the sample and new_* counts hold only what the other classifier let through.
 const against = options.against ? await import(pathToFileURL(resolve(options.against)).href) : null;
 
 function transcriptFiles(dir) {
@@ -64,7 +61,6 @@ const files = options['max-files'] ? allFiles.slice(0, Number(options['max-files
 const home = homedir();
 const stateDir = join(home, '.sayso');
 
-// Resumed sessions copy earlier history into a new file, so tool_use ids dedupe across files.
 const seenToolUses = new Set();
 const uniqueCommands = new Set();
 const flaggedUnique = new Set();

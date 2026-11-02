@@ -1,7 +1,3 @@
-/** @typedef {"catastrophic"|"self"|"credentials"|"destructive"|"outward"|"opaque"} Risk */
-/** @typedef {{risk: Risk, why: string[], commands?: string[]}} Verdict */
-/** @typedef {{home: string, cwd: string, stateDir: string, configDir?: string}} Ctx */
-
 const CATASTROPHIC = 'catastrophic';
 const SELF = 'self';
 const CREDENTIALS = 'credentials';
@@ -9,7 +5,6 @@ const DESTRUCTIVE = 'destructive';
 const OUTWARD = 'outward';
 const OPAQUE = 'opaque';
 
-/** @type {Risk[]} */
 export const RISK_ORDER = [CATASTROPHIC, SELF, CREDENTIALS, DESTRUCTIVE, OUTWARD, OPAQUE];
 
 const MAX_COMMAND_LENGTH = 20000;
@@ -22,8 +17,6 @@ const MAX_WALK_UNITS = 2048;
 const WALK_UNIT_CHARS = 512;
 const MAX_CLASSIFY_MS = 100;
 
-// A hook's timeout lets the tool run, so slow must end in a verdict. Classification is synchronous, which makes one
-// module-level deadline safe. A regex cannot be interrupted, so every one here has to stay linear on its own.
 let deadline = Number.POSITIVE_INFINITY;
 
 class OutOfTime extends Error {}
@@ -31,9 +24,6 @@ class OutOfTime extends Error {}
 function tick() {
   if (performance.now() > deadline) throw new OutOfTime();
 }
-
-// Lexer. A word is a list of parts so the walker can tell literal text from
-// expansions after the fact, when it knows which variables were assigned.
 
 const LIT = 0;
 const VAR = 1;
@@ -69,7 +59,6 @@ function isOctal(c) {
   return c >= '0' && c <= '7';
 }
 
-/** @param {string} src @param {boolean} [expansionsOnly] heredoc and arithmetic bodies expand but do not tokenize */
 const STARTS_A_GROUP = /[\s;&|()<>]/;
 
 function lex(src, expansionsOnly = false) {
@@ -451,11 +440,6 @@ function lex(src, expansionsOnly = false) {
   return expansions;
 }
 
-// Words. An Arg is a word after expansion: `text` is what matching sees and
-// `script` keeps the $VAR spelling for re-parsing inside sh -c or eval.
-
-/** @typedef {{text: string, script: string, dynamic: boolean, glob: boolean, proc: boolean, sole: boolean, quoted: boolean, splits: boolean}} Arg */
-
 const UNKNOWN = Symbol('unknown');
 
 function hasGlob(text) {
@@ -464,7 +448,6 @@ function hasGlob(text) {
   return open >= 0 && text.indexOf(']', open + 1) >= 0;
 }
 
-/** What is left of a glob once its wildcards are gone, so `*.sock` still counts as naming something. */
 function globLiterals(segment) {
   let literals = 0;
   const lastClose = segment.lastIndexOf(']');
@@ -501,19 +484,16 @@ function expandTilde(text, st) {
   return text;
 }
 
-/** @returns {Arg} */
 function literalArg(text, st) {
   const expanded = st ? expandTilde(text, st) : text;
   const glob = hasGlob(expanded);
   return { text: expanded, script: text, dynamic: glob, glob, proc: false, sole: false, quoted: false, splits: false };
 }
 
-/** A placeholder for a value supplied at run time, one or many: `{}` in find -exec or xargs input. */
 function listArg(text, script) {
   return { text, script, dynamic: true, glob: true, proc: false, sole: false, quoted: false, splits: false };
 }
 
-/** The first `{...}` with no brace inside it that holds `needle`, as {start, end} around the braces. */
 function braceGroup(text, needle) {
   let open = -1;
   for (let i = text.indexOf('{'); i >= 0 && i < text.length; i++) {
@@ -544,7 +524,6 @@ function expandBraces(text, out) {
 const SPLITS_INTO_MANY = /^"?\$\{?[@*]|\[[@*]\]\}"?$/;
 const SHELL_NUMBER = /^\$[$!?#]$/;
 
-/** @returns {Arg[]} */
 function resolveWord(word, st) {
   if (word.plain !== null && word.plain.includes('{')) {
     if (braceGroup(word.plain, '..')) return [listArg(word.plain, word.plain)];
@@ -553,7 +532,6 @@ function resolveWord(word, st) {
     return variants.map((variant) => literalArg(variant, st));
   }
   const parts = word.parts;
-  /** @type {Arg} */
   const arg = { text: '', script: '', dynamic: false, glob: false, proc: false, sole: false, quoted: false, splits: false };
   for (let p = 0; p < parts.length; p++) {
     const part = parts[p];
@@ -596,8 +574,6 @@ function resolveOne(word, st) {
   return resolveWord(word, st)[0];
 }
 
-// Paths. Pure string math, no filesystem.
-
 function normalizePath(path, cwd) {
   const absolute = path[0] === '/' ? path : `${cwd}/${path}`;
   const segments = [];
@@ -622,7 +598,6 @@ function isUnder(path, dir) {
 
 const OTHER_HOME = /^\/(?:(?:users|home)\/[^/]+|root)(?:\/(.*))?$/i;
 
-/** @returns {string|null} the path relative to a home directory, '' for the home directory itself */
 function homeRelative(path, st) {
   if (st.home !== '/' && isUnder(path, st.home)) return path.slice(st.home.length + 1);
   const other = OTHER_HOME.exec(path);
@@ -662,13 +637,11 @@ function isSecretPath(path, st) {
   return relative !== null && SECRET_FILE.test(relative);
 }
 
-// Paths compare as paths. macOS folds case and normalizes Unicode, so `.SAYSO` and `.ſayso` are the state directory,
-// and a glob segment counts as the name it could expand to.
+// macOS folds case and normalizes Unicode, so `.SAYSO` and `.ſayso` are the state directory.
 
 const NON_ASCII = /[^\x00-\x7f]/;
 const GLOB_SEGMENT = /[*?[]/;
 const SETTINGS_DIR = /^\.claude[^/]*$/;
-// ${X:-value} reads as its fallback. Any other expansion could be anything, so it reads as a wildcard.
 const EXPANSION_FALLBACK = /\$\{\w+:?[-=+]([^{}]*)\}/g;
 const EXPANSION_PIECE = /\$\([^()]*\)|\$\{[^{}]*\}|\$[A-Za-z_]\w*/g;
 
@@ -688,7 +661,6 @@ function bracketMatches(segment, open, close, c) {
   return found !== negated;
 }
 
-/** One pass that backs up only to the last star, so a run of stars costs nothing extra. Built as a RegExp, `.*.*.*` hangs on a short name. */
 function globMatches(segment, name) {
   let s = 0;
   let n = 0;
@@ -712,7 +684,6 @@ function globMatches(segment, name) {
   return s === segment.length;
 }
 
-/** Both sides already folded. A wildcard does not reach a dot name unless the glob starts with a dot, as in the shell. */
 function segmentCouldBe(segment, name) {
   if (segment === name) return true;
   if (!GLOB_SEGMENT.test(segment)) return false;
@@ -726,7 +697,6 @@ function pathReachesDir(path, dirSegments) {
   return dirSegments.every((name, i) => segmentCouldBe(segments[i], name));
 }
 
-/** A dot folder is read anywhere in the path, since a symlink or an unread `cd` can put it there. A bare `.*` is left to the full path check. */
 function namesStateDir(path, st) {
   if (st.stateBase[0] === '.') {
     for (const segment of foldName(path).split('/')) {
@@ -736,7 +706,6 @@ function namesStateDir(path, st) {
   return pathReachesDir(path, st.stateSegments);
 }
 
-/** Both sides folded. `.claude-work` counts as a settings folder and so does `$CLAUDE_CONFIG_DIR`, spelled or set through ctx. */
 function isSettingsFolderName(segment) {
   return SETTINGS_DIR.test(segment) || segmentCouldBe(segment, '.claude') || /^\$\{?claude_config_dir/.test(segment);
 }
@@ -766,7 +735,6 @@ function isSettingsPath(path, st) {
   return segments.some((segment) => segmentCouldBe(segment, '.claude'));
 }
 
-/** The path a flag or remote spec may be carrying: --key=PATH, @PATH, host:PATH. */
 function pathCandidates(text) {
   const candidates = [text];
   for (const separator of ['=', '@', ':']) {
@@ -785,7 +753,6 @@ function wordNamesStateDir(text, st) {
 
 const SOCKET_NAME = 'sayso.sock';
 
-/** For a file name anywhere, a glob needs a few literal characters of its own: `ls *` is not aimed at it, `*.sock` is. */
 function fileNameCouldBe(segment, name) {
   if (segment === name) return true;
   return GLOB_SEGMENT.test(segment) && globLiterals(segment) >= 3 && segmentCouldBe(segment, name);
@@ -809,8 +776,6 @@ function wordNamesSecret(arg, st) {
     return relative !== null && SECRET_GLOB.test(relative);
   });
 }
-
-// Classification state.
 
 function newState(ctx) {
   const home = ctx?.home ? normalizePath(ctx.home, '/') : '/nonexistent-home';
@@ -845,7 +810,6 @@ function cwdHoldsSecrets(cwd, home) {
   return /\/\.(?:ssh|aws|kube|docker|gnupg)(?:\/|$)|\/\.config\/gh(?:\/|$)/i.test(cwd) || cwd === home;
 }
 
-/** Reasons never carry command text: aggregate reports print them and transcripts are private. */
 function flag(st, risk, why) {
   st.flags.push({ risk, why });
 }
@@ -865,9 +829,6 @@ function buildVerdict(st) {
 function opaqueVerdict(why) {
   return { risk: OPAQUE, why: [why], commands: [] };
 }
-
-// Walker. A linear scan over tokens with command position as the only grammar
-// it needs: classification cares about simple commands, not nesting.
 
 const KEYWORDS = new Set(['if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', '!', '{', '}', 'coproc']);
 const COMPOUND_CLOSERS = new Set(['fi', 'done', '}']);
@@ -1010,7 +971,6 @@ function nextWordIndex(tokens, from) {
   return -1;
 }
 
-/** Runs the body once per literal list value, so `for c in "rm -rf /"; do eval "$c"; done` reads as what it does. */
 function walkLoop(tokens, from, st) {
   const nameAt = nextWordIndex(tokens, from);
   if (nameAt < 0) return from - 1;
@@ -1071,7 +1031,6 @@ function skipConditional(tokens, from, st) {
   return tokens.length;
 }
 
-/** The body of NAME() starts at `from`: a function that calls itself across a pipe or into the background is a fork bomb. */
 function checkForkBomb(tokens, from, nameWord, st) {
   const name = nameWord.plain;
   if (name === null) return;
@@ -1127,10 +1086,6 @@ function walkString(source, st) {
   walkNested(tokens, st);
 }
 
-// Strings that might be commands. Any program can run a string, so the walk does not need to know which ones do: a
-// string that reads as a dangerous command is flagged wherever it sits. Unreadable ones stay quiet, since most strings
-// are not commands, except when the walk itself gave up.
-
 const TOO_DEEP = 'nesting too deep to read';
 const TOO_MANY = 'too many nested strings to read';
 const OUT_OF_TIME = 'took too long to read';
@@ -1149,8 +1104,6 @@ function keepingRealRisks(st, visit) {
   }
 }
 
-// One budget for all of it: a loop iteration, a string, and the argv after `--` each cost what walking them costs, so
-// a string in a loop in a string pays at every level instead of multiplying.
 function spendWalk(st, cost = 1) {
   tick();
   if (st.budget.left >= cost) {
@@ -1175,7 +1128,6 @@ function walkCandidate(source, st) {
     return;
   }
   keepingRealRisks(st, (inner) => {
-    // Plain text like "> quoted" lexes as a bare redirect. It only means truncation when a shell really reads it.
     inner.inString = true;
     walkNested(tokens, inner);
   });
@@ -1183,7 +1135,6 @@ function walkCandidate(source, st) {
 
 const KEY_PREFIX = /^-{0,2}[\w.-]+(?:=|::?)\s*/;
 
-/** The ways a value can sit inside one word: whole, after --opt= or key=, or glued to a short flag. */
 function valuesIn(text) {
   const values = [text];
   let rest = text;
@@ -1199,7 +1150,6 @@ function valuesIn(text) {
   return values;
 }
 
-// A flag or variable that holds a command by its name, so even a single word in it is a command to read.
 const COMMAND_FLAG = /^--?(?:c|e|x|S|call|command|cmd|eval|exec|run|shell|split-string)$/;
 const COMMAND_OPTION = /^--?(?:call|command|cmd|eval|exec|run|shell|split-string)=|^-[A-Za-z]*c[a-z]/;
 const COMMAND_ENV = /(?:^|_)(?:COMMAND|CMD|EDITOR|PAGER|ASKPASS|RSH|BROWSER)$|^(?:VISUAL|LESSOPEN|LESSCLOSE|GIT_SSH|GIT_EXTERNAL_DIFF)$/;
@@ -1225,14 +1175,12 @@ function walkArgStrings(args, st) {
     const before = args[i - 1]?.text;
     if (TEXT_FLAGS.has(before) || TEXT_OPTION.test(script)) continue;
     walkValue(script, COMMAND_FLAG.test(before ?? '') || COMMAND_OPTION.test(script) || COMMAND_ENV_WORD.test(script), st);
-    // X='rm -rf y'; tool "$X": the script spelling is only $X, and the value is known.
     if (!dynamic && text !== script && HAS_BLANK.test(text)) walkValue(text, false, st);
   }
 }
 
 const NO_IO = { piped: false, previous: null, heredoc: null, herestring: null, stdinUnknown: false, stdinEmpty: false, truncates: [] };
 
-// Programs nobody names as a subcommand of something else, so `anything shred x` still means shred.
 const NEVER_A_SUBCOMMAND = new Set(['mkfs', 'newfs', 'mke2fs', 'wipefs', 'blkdiscard', 'sgdisk', 'sfdisk', 'shred', 'dd', 'sg_format', 'sg_sanitize']);
 const RECURSIVE_FLAG = /^-(?:[a-zA-Z]*[rR][a-zA-Z]*|-recursive)$/;
 
@@ -1246,7 +1194,6 @@ function walkArgvTails(args, st) {
   }
 }
 
-/** Everything a program that is not data-only was handed: its arguments, its stdin, and what echo piped into it. */
 function walkCommandStrings(args, io, st, stdinToo = true) {
   walkArgStrings(args, st);
   walkArgvTails(args, st);
@@ -1343,7 +1290,6 @@ function checkWriteTarget(text, st) {
   if (isPersistencePath(path, st)) flag(st, DESTRUCTIVE, 'write to a shell startup or system path');
 }
 
-/** A copy, move or link into a settings folder can land a settings file there, whatever the source is called. */
 function checkFolderTarget(text, st) {
   if (isSettingsDir(resolvePath(text, st), st)) flag(st, SELF, 'write to agent settings');
 }
@@ -1354,13 +1300,10 @@ function isRecursiveCopy(args) {
   return hasShortFlag(args, 'r') || hasShortFlag(args, 'R') || hasShortFlag(args, 'a') || hasFlag(args, '--recursive', '--archive');
 }
 
-/** A tree landing on the home folder can carry `.claude/settings.json` and `.zshrc`, and no word in the command says so. */
 function checkTreeOntoHome(key, args, text, st) {
   if (st.cwdGuessed || !(UNPACKS_TREES.has(key) || (key === 'cp' && isRecursiveCopy(args)))) return;
   if (resolvePath(text, st) === st.home) flag(st, SELF, 'unpacks a tree over the home folder, which can land agent settings');
 }
-
-// An ordinary write with content is normal work. These only empty a file, which is what `truncate` does.
 
 function checkEmptiedFiles(targets, st) {
   for (const target of targets) {
@@ -1396,8 +1339,6 @@ function scanWord(arg, st, skipSecrets) {
     flag(st, CREDENTIALS, 'reads a secret file');
   }
 }
-
-// Dispatch: peel wrappers until the real command, then apply its rule.
 
 const NAME_ALIASES = {
   __proto__: null,
@@ -1436,7 +1377,6 @@ const NAME_ALIASES = {
   'sayso.mjs': 'sayso',
 };
 
-// GNU tools under Homebrew's prefix, zsh's built-in zf_ versions, and uutils' prefixed builds run the same program.
 const COREUTILS_PREFIX = /^(?:g|zf_|uu_|uu-)(rm|rmdir|mv|cp|ln|dd|chmod|chown|install|shred|tee|truncate|unlink|env|nohup|nice|stdbuf)$/;
 const NOT_A_FORMATTER = new Set(['mkisofs', 'mksquashfs', 'mkhfs', 'mkcramfs']);
 
@@ -1487,7 +1427,6 @@ const WRAPPERS = {
   uvx: { short: 'p', long: ['--from', '--with', '--python'] },
 };
 
-// Tools that run another program behind a verb: `uv run X`, `pnpm exec X`.
 const RUNNER_VERBS = {
   __proto__: null,
   uv: ['run'],
@@ -1544,11 +1483,8 @@ function peelWrapper(spec, args) {
   return args.slice(i);
 }
 
-// Their arguments are text or paths they never run, so a string there that reads like a command is only data.
 const DATA_ONLY = new Set(['echo', 'printf', 'grep', 'rg', 'ag', 'ack', 'cat', 'tee', 'head', 'tail', 'wc', 'cut', 'tr', 'uniq', 'ls', 'jq', 'yq', 'diff', 'test', '[', ':', 'true', 'false', 'which', 'type', 'basename', 'dirname', 'realpath', 'readlink', 'stat', 'file', 'touch', 'mkdir', 'date', 'sleep', 'base64', 'xxd', 'od', 'pbcopy', 'wl-copy', 'xclip', 'logger', 'say', 'notify-send', 'wall', 'export', 'declare', 'typeset', 'local', 'readonly', 'read', 'cd', 'pushd']);
-// Their rules read their own strings, so the general walk would only read them twice.
 const READS_OWN_STRINGS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'eval', 'su', 'trap', 'watch', 'parallel', 'xargs', 'find', 'git', 'sed', 'awk']);
-// Stdin here is data even though the arguments may not be.
 const STDIN_IS_DATA = new Set(['sort', 'less', 'more', 'patch', 'curl', 'wget', 'nc', 'tar', 'gzip', 'gunzip', 'gh', 'mail', 'sendmail', 'psql', 'mysql', 'sqlite3', 'mongosh', 'cockroach', 'clickhouse-client']);
 
 function dispatch(argv, io, st) {
@@ -1591,7 +1527,6 @@ function dispatch(argv, io, st) {
   }
 }
 
-/** `env -S` splits its value and runs it, so it reads with the full shell rules, unreadable parts included. */
 function checkEnvSplit(args, st) {
   for (let i = 0; i < args.length; i++) {
     const text = args[i].text;
@@ -1607,7 +1542,6 @@ function checkEnvSplit(args, st) {
   }
 }
 
-/** Removes the values a program takes as prose: `{flags: exact, glued: /-mVALUE/}`. Used where the name alone is not enough. */
 function withoutTextArgs(args, spec) {
   const kept = [];
   for (let i = 0; i < args.length; i++) {
@@ -1620,7 +1554,6 @@ function withoutTextArgs(args, spec) {
 
 const GIT_TEXT = { flags: new Set(['-m', '-am', '-F', '-S', '-G']), glued: /^-(?:a?m|S|G|F)\S/ };
 const GH_TEXT = { flags: new Set(['-b', '-t', '-n', '-m', '-S', '-d', '-q', '-f', '-F', '--jq', '--field', '--raw-field', '--search', '--template', '--body-file']), glued: /^-[btnmSdqfF]\S|^--(?:jq|field|raw-field|search|template)=/ };
-// Their positional arguments are search terms or prose, not something to run.
 const GIT_TEXT_SUBCOMMANDS = new Set(['grep', 'stash']);
 
 const READS_NOTHING = new Set(['echo', 'printf', 'ls', 'stat', 'test', '[', 'chmod', 'chown', 'file', 'mkdir', 'touch', 'which', 'type', 'dirname', 'basename', 'realpath', 'readlink', 'ssh-add', 'ssh-keygen', 'ssh-copy-id']);
@@ -1628,7 +1561,6 @@ const USES_KEY_IN_PLACE = new Set(['ssh', 'scp', 'sftp', 'rsync', 'autossh']);
 const SEARCH_TOOLS = new Set(['grep', 'rg', 'ag', 'ack']);
 const SCRIPT_RUNNERS = new Set(['tsx', 'ts-node', 'esno', 'nodemon', 'pm2', 'forever', 'sh', 'bash', 'zsh', 'dash', 'ksh']);
 const COPIES_TREES = new Set(['tar', 'zip', '7z', 'cp', 'rsync', 'scp', 'ditto']);
-// Reading a disk is ordinary. The list of tools that can write one is open ended, so everything else is held.
 const READS_DISKS = new Set(['ls', 'stat', 'file', 'df', 'du', 'lsblk', 'blkid', 'findmnt', 'diskutil', 'hdiutil', 'mount', 'umount', 'smartctl', 'hdparm', 'fdisk', 'gdisk', 'sfdisk', 'sgdisk', 'parted', 'cryptsetup', 'hexdump', 'xxd', 'od', 'cat', 'head', 'tail', 'strings', 'grep', 'rg', 'echo', 'printf', 'test', '[', 'readlink', 'realpath', 'basename', 'dirname', 'iostat', 'lsof', 'udevadm']);
 
 function scanCommandWords(key, argv, st) {
@@ -1661,8 +1593,6 @@ function patternIndex(argv) {
   }
   return first;
 }
-
-// Argument helpers.
 
 const NO_VALUE_FLAGS = new Set();
 
@@ -1711,7 +1641,6 @@ const inPlaceEdits = (args) => (hasShortFlag(args, 'i') || hasFlag(args, '--in-p
 
 const COPY_VALUE_FLAGS = new Set(['-t', '--target-directory', '-T', '--suffix', '-S', '-m', '--mode', '-o', '--owner', '-g', '--group']);
 
-/** Where a copy lands: `-t DIR` wherever it sits, otherwise the last plain word. Rsync and scp specs carry a host we leave alone. */
 function copyTargets(args) {
   const named = flagValues(args, '-t', '--target-directory');
   return named.length ? named : positionals(args, COPY_VALUE_FLAGS).slice(-1);
@@ -1751,7 +1680,6 @@ const WRITE_TARGETS = {
   dd: (args) => args.filter((arg) => arg.text.startsWith('of=')).map((arg) => ({ text: arg.text.slice(3) })),
 };
 
-// Commands that fill a directory, so the settings file they write is never named.
 const FOLDER_TARGETS = {
   __proto__: null,
   cp: copyTargets,
@@ -1776,13 +1704,10 @@ function checkCopiedSettings(words, st) {
   }
 }
 
-// Per-command rules. Each takes (args, io, st, key) and only flags.
-
 const REBUILDABLE = new Set(['node_modules', 'dist', 'build', '.next', 'target', '__pycache__', '.cache', 'coverage', '.turbo', 'out', '.pytest_cache', '.venv', 'venv', 'tmp']);
 const OS_SCRATCH_CHILD = /^\/(?:tmp|var\/tmp|var\/folders)\/./i;
 const FIND_CLEANUP_NAME = /^(?:\*\.py[co]|\.DS_Store)$/;
 
-/** The name alone says rebuildable, unless this same command moved or linked something onto it. */
 function isRebuildable(arg, st) {
   if (arg.text[0] === '/' || arg.text[0] === '~') return false;
   if (arg.text.includes('$')) return false;
@@ -1804,7 +1729,6 @@ function noteRename(args, st) {
   }
 }
 
-/** Children of the OS temp roots go away on their own. Only when written as such: a relative path in a project that happens to live under /tmp is still that project. Normalizing first means /tmp/../etc is not one of them. */
 function isOsScratch(arg, st) {
   return arg.text[0] === '/' && !arg.text.includes('$') && OS_SCRATCH_CHILD.test(deleteRootOf(arg, st));
 }
@@ -1815,7 +1739,6 @@ function isAllGlob(segment) {
   return hasGlob(segment) && ALL_GLOB_SEGMENT.test(segment);
 }
 
-/** What a delete reaches: `~/?*` and `/[a-z]*` empty the folder they sit in, the same as `~/*`. */
 function deleteRootOf(arg, st) {
   const segments = arg.text.split('/');
   while (segments.length > 0 && (segments.at(-1) === '' || isAllGlob(segments.at(-1)))) segments.pop();
@@ -1823,7 +1746,6 @@ function deleteRootOf(arg, st) {
   return resolvePath(stem === '' && arg.text[0] === '/' ? '/' : stem === '' ? '.' : stem, st);
 }
 
-/** A glob directly under `/` that could be a protected root: `/U*` or `/et?`. */
 function globReachesRoot(target, st) {
   if (!target.glob) return false;
   const path = resolvePath(target.text, st).toLowerCase();
@@ -1836,7 +1758,6 @@ function globReachesRoot(target, st) {
 const MAX_BRACE_WORDS = 64;
 const BRACE_GROUP = /\{([^{}]*,[^{}]*)\}/;
 
-/** `dist/{../.git,}` is two words to a shell, and only the words say what the delete reaches. Past the cap the word stays whole, which no allowance accepts. */
 function braceWords(arg) {
   let words = [arg.text];
   while (words.some((word) => BRACE_GROUP.test(word)) && words.length <= MAX_BRACE_WORDS) {
@@ -1851,7 +1772,6 @@ function braceWords(arg) {
 const HOME_SPELLED = /^(?:\$\{HOME\b[^}]*\}|~-?)(?=\/|$)/;
 const WHOLE_AT_RUN_TIME = /^(?:\$\(.*\)|`.*`|\$\{[^}]*\}|\$\w+|\$[@*])\/*\*?$/s;
 
-/** Whether a target could be the home folder or a system root once the shell has expanded it. A word with nothing literal in it, or a glob under one, counts too when `wide`, for a call that is held either way. */
 function couldBeRoot(target, st, wide = false) {
   return braceWords(target).some((word) => {
     if (WHOLE_AT_RUN_TIME.test(word.text) && (wide || /~|\bHOME\b/.test(word.text))) return true;
@@ -1910,8 +1830,6 @@ function ruleRm(args, _io, st) {
       } else if (text.includes('r') || text.includes('R')) recursive = true;
     } else targets.push(arg);
   }
-  // An unquoted expansion can carry flags as well as names, so `rm $X victim` may be recursive and `$@` always may. A
-  // function's `$1` is the same however it is quoted, since the caller chooses it: `x() { rm "$1" "$2"; }; x -rf victim`.
   const carriesFlags = targets.some((target) => target.splits || POSITIONAL_PARAMETER.test(target.script));
   for (const target of targets.flatMap(braceWords)) {
     if (recursive || (carriesFlags && (!target.splits || POSITIONAL_PARAMETER.test(target.script)))) classifyRecursiveDelete(target, st);
@@ -1937,7 +1855,6 @@ function ruleCopyFromNull(args, _io, st) {
   if (pos.length === 2 && pos[0].text === '/dev/null') checkEmptiedFiles([pos[1]], st);
 }
 
-/** A link makes every later path rule read the wrong name, so a link to home, a root, the guard or the settings is held at the link. */
 function ruleLn(args, io, st) {
   ruleCopyFromNull(args, io, st);
   noteRename(args, st);
@@ -1953,7 +1870,6 @@ function ruleLn(args, io, st) {
 
 const GUARD_NAMES = ['sayso', 'sayso.mjs'];
 
-/** A copy or link of the CLI runs under any name it likes, and `/tmp/s policy trusted-agent` reads as nothing. */
 function checkCopiesGuard(source, st) {
   const base = foldName(baseName(source.text.replace(/\/+$/, '')));
   if (GUARD_NAMES.includes(base) || (globLiterals(base) >= 1 && GUARD_NAMES.some((name) => segmentCouldBe(base, name))) || /\$\((?:which|command -v) sayso\b/.test(source.text)) {
@@ -2026,14 +1942,12 @@ function rulePartition(key) {
   };
 }
 
-/** Anything but a named read-only flag writes the partition table, including no flags at all. */
 function ruleDiskUnlessReading(key, readOnly) {
   return (args, _io, st) => {
     if (!args.some((arg) => readOnly.has(arg.text))) flag(st, CATASTROPHIC, `${key} on a disk`);
   };
 }
 
-/** A verb anywhere among the positionals, since value flags before it are not all known. */
 function ruleDiskVerb(key, verbs, risk = CATASTROPHIC, why = `${key} destroys data`) {
   return (args, _io, st) => {
     if (positionals(args).some((arg) => verbs.test(arg.text))) flag(st, risk, why);
@@ -2096,7 +2010,7 @@ const MAX_KILL_PATTERN = 64;
 const STOP_SIGNAL = /^-(?:s)?(?:SIG)?(?:STOP|TSTP|17|19)$/i;
 const USER_FLAG = /^-[uU]$|^-[uU].|^--(?:euid|uid|user)\b/;
 
-/** pkill reads its argument as a regex, so `say.o` is aimed at the guard too. Short ones match everything by accident. Running it is a regex an attacker wrote, so a long one is not run and counts as aimed at the guard. */
+/** pkill reads its argument as a regex, so `say.o` is aimed at the guard too. */
 function patternMatchesGuard(text) {
   if (text[0] === '-' || !/[.*?[(|\\]/.test(text)) return false;
   if (text.length > MAX_KILL_PATTERN) return true;
@@ -2145,8 +2059,6 @@ function ruleLaunchctl(args, io, st) {
   ruleServiceManager(args, io, st);
   ruleArgvRunner(args, io, st);
 }
-
-// git. Each entry returns a reason when the subcommand destroys work.
 
 const GIT_GLOBAL_VALUE_FLAGS = new Set(['-C', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env', '--exec-path']);
 const DOT_PATHS = new Set(['.', './', ':/', '*', ':(top)']);
@@ -2240,7 +2152,6 @@ const GIT_CLONE_VALUE_FLAGS = new Set(['-b', '--branch', '-o', '--origin', '-c',
 const GIT_RUN_SETTING = /^(?:core\.(?:fsmonitor|sshcommand|hookspath|editor|pager|askpass|gitproxy)|credential\.helper|diff\.external|gpg\.(?:\w+\.)?program|sequence\.editor|alias\.|filter\.|diff\.\w+\.(?:command|textconv)|merge\.\w+\.driver|include\.path|includeif\.)/i;
 const NAMES_A_PROGRAM = /^[!/~.]|\s|\$/;
 
-/** `core.editor vim` is setup, and `core.fsmonitor /tmp/e` runs on every later git command in every repository. */
 function checkGitConfig(args, st) {
   if (!hasFlag(args, '--global', '--system')) return;
   const [key, value] = positionals(args);
@@ -2252,8 +2163,6 @@ function checkGitSetting(script, st) {
   const equals = script.indexOf('=');
   if (equals > 0) walkCandidate(script.slice(equals + 1), st);
 }
-
-// Tools whose danger is a verb. Keys are one or two leading positionals.
 
 const VERB_VALUE_FLAGS = new Set(['-n', '--namespace', '--context', '--kubeconfig', '--cluster', '--user', '-s', '--server', '--profile', '--region', '--output', '--endpoint-url', '-c', '-H', '--host', '--config', '-f', '--file', '-p', '--project-name', '--env-file', '--prefix', '--filter', '-w', '--workspace', '-C', '--cwd', '--dir', '-a', '--app', '--stack', '-R', '--repo', '--hostname']);
 
@@ -2340,7 +2249,6 @@ const EXTRA_VERB_CHECKS = {
   },
 };
 
-// psql and mysql take `\! cmd`, mysql `system cmd`, sqlite3 `.shell cmd` and `.system cmd`.
 const SQL_SHELL_ESCAPE = /(?:^|[\n;])[ \t]*(?:\\!|\.shell|\.system|system)\s+([^\n;]+)/gi;
 
 function ruleSql(args, io, st) {
@@ -2376,8 +2284,6 @@ function ruleRedis(args, _io, st) {
   if (args.some((arg) => /^flush(all|db)$/i.test(arg.text))) flag(st, DESTRUCTIVE, 'redis flush');
 }
 
-// Credentials and guard self-protection.
-
 function ruleSecurity(args, _io, st) {
   const verb = positionals(args, new Set(['-s', '-a', '-l', '-c', '-D']))[0]?.text;
   if (/^find-(generic|internet)-password$/.test(verb ?? '') && (hasShortFlag(args, 'w') || hasShortFlag(args, 'g'))) {
@@ -2393,7 +2299,6 @@ const LOOPBACK_HOST = String.raw`127(?:\.\d+){1,3}|localhost\.?|\[?::1\]?|\[?::f
 const LOOPBACK = new RegExp(String.raw`(?:^|[/@:\s=])(?:${LOOPBACK_HOST})(?:$|[:/\s])`, 'i');
 const LOOPBACK_IN_CODE = /127\.\d+|localhost|::1|0\.0\.0\.0/i;
 const GUARD_PORT = /(?:^|\D)7428(?:$|\D)/;
-// Names that come back to this machine. Anyone's own DNS can do the same, so this is a hint: the port's own auth is the boundary.
 const URL_TO_GUARD = new RegExp(String.raw`(?:^|[/@=])(?:${LOOPBACK_HOST}|(?:[\w.-]*\.)?(?:localhost|localtest\.me|lvh\.me|nip\.io|sslip\.io|xip\.io)|\[::ffff:7f[\da-f:]*\]):7428(?:$|\D)`, 'i');
 const DEV_TCP = /\/dev\/(?:tcp|udp)\/([^/]+)\/(\S+)/;
 const COMPUTED_PORT = /\$\(\(/;
@@ -2439,7 +2344,6 @@ function ruleOpenssl(args, io, st) {
   if (args[0]?.text === 's_client' && (io.piped || io.stdinFile) && !isLoopbackCall(args)) flag(st, OUTWARD, 'sends data to the network');
 }
 
-// The session's dialog sits on its own terminal, so anything that types there can answer it.
 const TYPES_KEYS = 'types keys into a terminal, which can answer its own dialog';
 const TMUX_TYPES = /^send(?:-k(?:e(?:ys?)?)?)?$|^send-prefix$|^paste(?:b|-buffer)?$|^pasteb.*$|^if(?:-shell)?$|^run(?:-shell)?$|^source(?:-file)?$/;
 
@@ -2459,9 +2363,7 @@ function ruleTerminalRemote(verb) {
   };
 }
 
-// Without hooks the nested session has no gate, while a plain nested `claude -p` still has one.
 const CLAUDE_SKIPS_HOOKS = /^--(?:bare|safe-mode|setting-sources|settings)(?:=|$)/;
-// These move its config, switch its hooks off or stop the shell that starts them. A renamed link to the binary gets past this.
 const CLAUDE_LOOKS_ELSEWHERE = /^(?:CLAUDE_CONFIG_DIR|HOME|XDG_CONFIG_HOME|CLAUDE_CODE_\w+|SHELLOPTS|BASHOPTS|BASH_ENV|BASH_FUNC_.+|ENV|PS4|IFS|NODE_OPTIONS|LD_\w+|DYLD_\w+)$/;
 const CLAUDE_PLUGIN_OFF = /^(?:disable|uninstall|remove|rm)$/;
 const ENV_DROPS_CONFIG = /^(?:-u|--unset=)?CLAUDE_CONFIG_DIR$|^-i$|^--ignore-environment$|^-$/;
@@ -2477,7 +2379,6 @@ function ruleClaude(args, _io, st) {
   if (args[0]?.text === 'config' && words.some((arg) => arg.dynamic || /disableAllHooks|enabledPlugins/i.test(arg.text))) flag(st, SELF, 'switches the guard off');
 }
 
-/** A prefix assignment lasts one command, and `CLAUDE_CONFIG_DIR=x timeout 60 claude` only shows `claude` once the wrappers are peeled. */
 function dispatchWithConfigMoved(names, argv, io, st) {
   const moved = names.filter((name) => CLAUDE_LOOKS_ELSEWHERE.test(name) && !st.env.has(name));
   for (const name of moved) st.env.set(name, UNKNOWN);
@@ -2489,7 +2390,6 @@ function ruleUnset(args, _io, st) {
   if (hasFlag(args, 'CLAUDE_CONFIG_DIR')) st.env.set('CLAUDE_CONFIG_DIR', UNKNOWN);
 }
 
-// The CLI's own verbs, whatever it is called on disk: a copy or a link changes the name but not these words.
 const GUARD_CLI_VERBS = new Set(['policy', 'notify', 'agent']);
 const GUARD_CLI = /^(?:policy trusted-agent|notify add (?:webhook|command)|agent (?:add|revoke))(?: |$)/;
 
@@ -2509,8 +2409,6 @@ function ruleSayso(args, _io, st) {
   const subcommand = positionals(args)[0]?.text;
   if (subcommand !== undefined && !SAYSO_READ_ONLY.has(subcommand)) flag(st, SELF, 'changes the guard through its cli');
 }
-
-// Script runners: shells, eval, ssh and friends, whose arguments are more shell.
 
 const SHELL_VALUE_LONG = new Set(['--rcfile', '--init-file']);
 
@@ -2548,7 +2446,6 @@ function ruleShell(args, io, st) {
   else if (io.piped || io.stdinUnknown) flag(st, OPAQUE, 'pipeline into a shell');
 }
 
-// Well-known tools that print shell setup for their caller to eval.
 const ENV_SETUP_SUBSTITUTION = /^\$\(\s*(?:\S*\/)?(?:brew shellenv|ssh-agent(?: -s)?|pyenv init -(?:-path)?|rbenv init -|nodenv init -|fnm env(?: --[\w-]+)*|direnv hook \w+|mise activate \w+|zoxide init \w+|starship init \w+|conda shell\.\w+ hook)\s*\)$/;
 
 function ruleEval(args, _io, st) {
@@ -2564,14 +2461,12 @@ function ruleSource(args, io, st) {
   else if (io.piped && (file?.text === '/dev/stdin' || file?.text === '/dev/fd/0')) flag(st, OPAQUE, 'pipeline into source');
 }
 
-// at and batch read their command from stdin, and walkCommandStrings already reads the literal forms of that.
 function ruleAt(_args, io, st) {
   const literal = io.previous?.[0]?.text === 'echo' || io.previous?.[0]?.text === 'printf';
   if (io.piped && !literal) flag(st, OPAQUE, 'pipeline into a scheduler');
   else if (io.stdinUnknown) flag(st, OPAQUE, 'pipeline into a scheduler');
 }
 
-// Runners that take the program as plain trailing words, behind their own flags and names.
 function ruleArgvRunner(args, _io, st) {
   for (let i = 0; i < args.length; i++) {
     if (RULES[ruleKey(baseName(args[i].text))] && spendWalk(st, args.length - i)) keepingRealRisks(st, (inner) => dispatch(args.slice(i), NO_IO, inner));
@@ -2608,7 +2503,6 @@ function ruleSsh(args, _io, st) {
   }
 }
 
-/** `x -rf victim` after `alias x=rm` reads as an unknown program, and `eval` or `expand_aliases` runs it as the alias. */
 function ruleAlias(args, _io, st) {
   if (args.some((arg) => arg.text.includes('='))) flag(st, OPAQUE, 'defines an alias, so later names are not what they look like');
 }
@@ -2635,7 +2529,6 @@ function withPlaceholder(arg, placeholder) {
 const FIND_ACTION = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir']);
 const FIND_WIDENS = new Set(['-o', '-or', ',', '!', '-not']);
 
-/** Only `-name dist -delete` shapes are cleanup. Find evaluates left to right, so a test after the action narrows nothing, and OR or NOT reach beyond the name. */
 function cleansOnlyRebuildables(args) {
   const action = args.findIndex((arg) => FIND_ACTION.has(arg.text));
   const names = flagValues(args.slice(0, action < 0 ? args.length : action), '-name').map((arg) => arg.text);
@@ -2712,33 +2605,26 @@ function ruleParallel(args, io, st) {
   walkString(source.includes('{}') ? source.replaceAll('{}', '$__item') : `${source} $__item`, st);
 }
 
-// Inline code in other languages.
-
 const CODE_PATTERNS = [
   [/rmtree|remove_tree|removedirs|os\.remove|\bunlink|\brmdir|rm_rf|\brm\s*\(|\[["'`]rm(?:Sync|dir)?["'`]\]|rmSync|FileUtils\.(?:rm|remove)|File\.delete|Dir\.(?:delete|rmdir)|Deno\.remove|file\s+delete|delete-(?:directory|file)|Remove-Item|fs::remove/, 'inline code deletes files'],
   [/(?<![.\w])system\(|\.system\(|subprocess|child_process|(?<![.\w])exec\(|os\.exec|os\.execute|execSync|\bspawn|\bpopen|shell_exec|passthru|proc_open|pcntl_exec|Open3|do shell script/i, 'inline code runs a process'],
   [/(?<![.\w])eval\(|b64decode/, 'inline code evaluates generated code'],
   [/(?<![.\w])(?:import|require)\s*\(\s*(?!["'`][^"'`$]*["'`]\s*[,)])/, 'inline code loads a module chosen at run time'],
 ];
-// A heredoc script reaches as far as `python3 script.py`, which passes unread, so process use alone is not a signal there.
 const SCRIPT_PATTERNS = [
   [/rmtree|remove_tree|rm_rf|rmSync|\.rm\s*\(|FileUtils\.(?:rm|remove)|Deno\.remove|file\s+delete\s+-force|delete-directory|Remove-Item/, 'inline script deletes a tree'],
   [/^(?=[\s\S]*b64decode)(?=[\s\S]*(?:exec|eval)\()/, 'inline script runs decoded code'],
 ];
-// Perl, Ruby and PHP also run a process with no parenthesis at all.
 const RUNS_ITS_ARGV = /\b(?:exec|system)\s+@ARGV\b/;
 const BARE_PROCESS = /(?<![.\w$@%])(?:system|exec)\s+(?!@ARGV\b)["'$@%(\[]|%x[({[<|!/]|\bqx\s*[({[<|!/]|\bopen\s*\(?[^,\n]{0,256},\s*["'](?:\||-\||\|-)|\|["']\s*\)/;
-// A backtick only runs something outside a string or a regex, and one-liners are full of s/`a`/b/.
 const MAX_BACKTICK_READ = 2000;
 const NOT_BACKTICK_CODE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:s|y|tr|m)([/|#!,])(?:\\.|(?!\1)[^\\])*\1(?:(?:\\.|(?!\1)[^\\])*\1)?/g;
 const PROCESS_EXEC = /system|subprocess|child_process|exec|spawn|popen|shell_exec|passthru|proc_open|open3|do shell script|%x|\bqx\b|`|\|\s*["']|["']\s*\|/i;
-// `["rm", "-rf", "x"]`, `system "rm", "-rf", "x"` and `spawn("rm", ["-rf", "x"])` are one command in several strings.
 const STRING_RUN = /(?:["'][^"'\n]*["']\s*,\s*(?:\[\s*)?)+["'][^"'\n]*["']/g;
 const QUOTE_OPENER = /(?:%[xqQwW]|\b(?:qx|qq|qw|q))\s*([({[<|!/])/g;
 const QUOTE_CLOSER = { '(': ')', '{': '}', '[': ']', '<': '>', '|': '|', '!': '!', '/': '/' };
 const WRITES_A_FILE = /writeFile|write_text|write_bytes|appendFile|json\.dump|open\([^)]{0,256}["'][wax]b?\+?["']|File\.write/;
 
-/** Quoted spans, left to right. A kind of quote that fails to close once never closes later either, so each kind runs off the end at most once and the scan stays linear. */
 function quotedSpans(code) {
   const spans = [];
   const dead = new Set();
@@ -2766,7 +2652,6 @@ function withoutQuotedText(code) {
   return out + code.slice(at);
 }
 
-/** Bodies of perl and ruby's qx(...), q{...}, %x[...]. The same one-failure-per-closer rule keeps it linear. */
 function quoteOperatorBodies(code) {
   const bodies = [];
   const dead = new Set();
@@ -2807,7 +2692,6 @@ function checkInlineCode(code, sole, st, patterns = CODE_PATTERNS, runsBare = fa
   checkPathsInCode(code, st);
 }
 
-/** A glob or a case change in a string literal aims at the same directory a plain spelling would. */
 function checkPathsInCode(code, st) {
   if (!code.includes('/')) return;
   const writes = WRITES_A_FILE.test(code);
@@ -2818,7 +2702,6 @@ function checkPathsInCode(code, st) {
   }
 }
 
-/** A literal shell string inside code is read with the shell rules, so os.system('rm -rf /') scores as rm -rf /. */
 function checkEmbeddedShell(code, st, singleWords) {
   const candidates = quotedSpans(code).map((span) => span.body);
   for (const match of code.matchAll(STRING_RUN)) {
@@ -2872,7 +2755,6 @@ function checkOsascript(code, st) {
   if (/\bdelete\b|\bempty\s+(?:the\s+)?trash\b|\berase\b/i.test(code)) flag(st, DESTRUCTIVE, 'inline code deletes files');
 }
 
-/** `python3 -c'code'` is one shell word, and the interpreter still runs what follows the flag. */
 function gluedCode(text, spec) {
   if (!spec.glued || text[0] !== '-' || text[1] === '-') return null;
   for (let c = 1; c < text.length; c++) {
@@ -2943,7 +2825,6 @@ function interpreterRule(spec) {
       notCode.push(...args.slice(i));
       break;
     }
-    // `perl -e 'alarm 30; exec @ARGV' 30 cmd` is how macOS spells timeout, so what it runs is the command to read.
     if (runsArgv) dispatch(notCode.slice(notCode.findIndex((arg) => !/^\d+$/.test(arg.text))), { ...NO_IO }, st);
     else walkCommandStrings(notCode, io, st, hasProgram);
     if (hasProgram) return;
@@ -2981,7 +2862,6 @@ const SED_RUNS_COMMAND = /(?:^|[;{}\n\d$/])[ \t]*e\s+([^;}\n]+)/g;
 const SED_EVAL_FLAG = /(?:^|[;{}\n\d$,])[ \t]*s([^\w\s])(?:\\.|(?!\1)[^\\]){0,1024}\1(?:\\.|(?!\1)[^\\]){0,1024}\1[gpiImM\d]*e(?![\w/])/;
 const SED_EMPTIES = /^(?:(?:1,\$)?d|\/\.\*?\/d|s([^\w\s])\.\*\1\1g?)$/;
 
-/** GNU sed runs commands with its `e` command and the `e` flag of `s`. */
 function ruleSed(args, _io, st) {
   const scripts = flagValues(args, '-e', '--expression');
   const first = positionals(args, new Set(['-e', '--expression', '-f', '--file', '-l', '-E']))[0];
@@ -3009,7 +2889,6 @@ function ruleRead(args, _io, st) {
   for (const arg of positionals(args, new Set(['-p', '-d', '-n', '-t', '-u', '-a']))) st.env.set(arg.text, UNKNOWN);
 }
 
-/** A folder we cannot read could be home, the worst case for every path rule, so that is what later paths read against. */
 function ruleCd(args, _io, st, key) {
   const target = positionals(args)[0];
   const known = target && !target.dynamic && target.text !== '-';
@@ -3202,17 +3081,12 @@ for (const [name, check] of Object.entries(EXTRA_VERB_CHECKS)) {
   };
 }
 
-// Public API.
-
-/** @param {string} command @param {Ctx} ctx @returns {Verdict|null} */
-// A script file runs code these rules can't read for keystrokes. A heredoc and `-e` are read, in either language.
 const readOsascript = RULES.osascript;
 RULES.osascript = (args, io, st, key) => {
   if (!io.heredoc && !args.some((arg) => arg.text.startsWith('-e'))) flag(st, SELF, TYPES_KEYS);
   readOsascript(args, io, st, key);
 };
 
-// These also run a program given to them, so they are listed as runners and only gain this.
 for (const [name, types] of [['dtach', '-p'], ['abduco', '-a']]) {
   const runner = RULES[name];
   RULES[name] = (args, io, st, key) => {
@@ -3234,7 +3108,6 @@ function readCommand(command, ctx) {
     st = newState(ctx);
     walkTokens(lex(command), st);
   } catch (error) {
-    // Stack overflow from absurd nesting lands here too: the guard fails closed, and keeps whatever it already saw.
     const why = error instanceof OutOfTime ? OUT_OF_TIME : error instanceof ParseFailure ? 'shell syntax could not be parsed' : 'classifier could not read the command';
     if (!st) return opaqueVerdict(why);
     flag(st, OPAQUE, why);
@@ -3263,7 +3136,6 @@ function classifyFileRead(input, ctx) {
   return fileVerdict(st);
 }
 
-/** Grep and Glob read under a directory, so a search rooted in the state directory reads it too. */
 function classifySearch(input, ctx) {
   if (typeof input.path !== 'string') return null;
   const st = newState(ctx);
@@ -3297,16 +3169,12 @@ const TOOL_RULES = {
   ExitWorktree: classifyExitWorktree,
 };
 
-// `send`, `drop` and `pay` only count as whole name segments: `dropdown`, `payload` and `resend_status` are not actions.
 const MCP_OUTWARD_TOOL = /delete|destroy|remove|purge|wipe|terminate|revoke|publish|deploy|transfer|(?:^|[_-])(?:drop|send|pay|rm|rmdir|unlink|erase|refund|forward|push|merge|reset|kill|stop|move|mv|rename|kubectl)(?:[_-]|$)|^truncate(?:[_-](?:table|file|db|database))?$/;
 
 const MCP_READ_ONLY = /^(?:get|list|read|search|find|describe|show|fetch|view|count|check|is|has)(?:[_-]|$)/;
 const MCP_RUNS_THINGS = /exec|shell|write|command|(?:^|[_-])(?:re)?run(?:s|ner)?(?:[_-]|$)|(?:^|[_-])(?:bash|eval|terminal|spawn|launch|invoke|edit|patch|save|append|overwrite)(?:[_-]|$)|(?:^|[_-])create[_-](?:file|dir|directory|folder)(?:[_-]|$)|^(?:sh|zsh|python3?|node|ruby|perl|php|lua|applescript|osascript|powershell|pwsh|system)$/;
-// Servers name their arguments freely, so a key is read by its words: `shell_command`, `filePath`, `sqlQuery`.
 const MCP_COMMAND_KEY = new Set(['command', 'commands', 'cmd', 'cmds', 'cmdline', 'script', 'scripts', 'shell', 'bash', 'sh', 'exec', 'executable', 'run', 'program', 'argv']);
-// What a shell makes of a program in another language, so it says nothing about that program.
 const NOT_SHELL_SYNTAX = new Set(['shell syntax could not be parsed', 'command name is not literal', 'a zsh glob qualifier runs code', 'empties a file']);
-// What a server calls the rest of a command, when its first word is under a command key.
 const MCP_ARGUMENT_KEYS = ['args', 'arguments', 'argv', 'params', 'parameters'];
 const MCP_SQL_KEY = new Set(['sql', 'statement', 'statements', 'stmt']);
 const MCP_PATH_KEY = new Set(['path', 'paths', 'file', 'files', 'filepath', 'filename', 'dir', 'directory', 'folder', 'dest', 'destination', 'target', 'src', 'source', 'cwd', 'root', 'output', 'outfile', 'uri', 'url', 'location', 'pathname']);
@@ -3318,13 +3186,11 @@ const camelToSnake = (name) => name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLow
 const shellQuote = (text) => `'${text.replaceAll("'", `'\\''`)}'`;
 const stringsIn = (value) => (Array.isArray(value) ? value.filter((word) => typeof word === 'string') : typeof value === 'string' ? [value] : []);
 
-/** `{command: ["rm", "-rf", "x"]}` and `{args: ["rm", "-rf", "x"]}` are one command a word at a time. Each word is read alone too, for a list of whole commands. */
 function mcpArgvString(words, found) {
   const [first, ...rest] = words;
   if (rest.length) found.items.push({ kind: 'command', text: [first, ...rest.map(shellQuote)].join(' ') });
 }
 
-/** Every string a tool call holds under a key that names what it is, at any depth. */
 function mcpStrings(value, kind, found, depth) {
   if (found.overflow) return;
   if (typeof value === 'string') {
@@ -3344,7 +3210,6 @@ function mcpStrings(value, kind, found, depth) {
   for (const [key, child] of Object.entries(value)) {
     const words = camelToSnake(key).split(/[^a-z0-9]+/);
     const childKind = words.some((word) => MCP_COMMAND_KEY.has(word)) ? 'command' : words.includes('code') ? 'code' : words.some((word) => MCP_SQL_KEY.has(word)) ? 'sql' : words.includes('query') || words.includes('q') ? 'query' : words.some((word) => MCP_PATH_KEY.has(word)) ? 'path' : kind;
-    // `{command: "sh", arguments: ["-c", "rm -rf x"]}` is one command in two fields.
     const siblings = MCP_ARGUMENT_KEYS.filter((name) => name !== key).flatMap((name) => stringsIn(value[name]));
     const runnable = childKind === 'command' || childKind === 'code';
     if (runnable && typeof child === 'string' && siblings.length) mcpArgvString([child, ...siblings], found);
@@ -3404,14 +3269,11 @@ function classifyMcpTool(toolName, toolInput, ctx) {
   const read = found.overflow ? [opaqueVerdict(TOO_MANY_ARGUMENTS)] : [];
   for (const item of found.items) read.push(classifyMcpString(item, readOnly, ctx));
   const verdict = worstVerdict([...named, ...read]);
-  // A person can trust a tool's name in the policy. What its arguments say still counts, so the hook has to know which it was.
   return verdict && !worstVerdict(read) ? { ...verdict, nameOnly: true } : verdict;
 }
 
-/** The verdict may be missing what it never got to, so an agent shouldn't be the one to wave it through. */
 export const readToTheEnd = (verdict) => !verdict?.why?.some((why) => [TOO_DEEP, TOO_MANY, OUT_OF_TIME, TOO_MANY_ARGUMENTS].includes(why));
 
-/** @param {string} toolName @param {object} toolInput @param {Ctx} ctx @returns {Verdict|null} */
 export function classifyToolCall(toolName, toolInput, ctx) {
   if (typeof toolName !== 'string') return null;
   deadline = performance.now() + MAX_CLASSIFY_MS;

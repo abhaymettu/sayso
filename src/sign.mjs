@@ -1,7 +1,5 @@
 import crypto from "node:crypto";
 
-// The approval is an Ed25519 signature over the exact document the person read on their own device.
-// The machine holds only public keys, so nothing a session or an agent can read here is able to say yes.
 const SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const SIGNING_CONTEXT = "sayso-approval-v1\n";
 
@@ -29,7 +27,6 @@ export function verifyApproval(doc, code, keys) {
   return ok ? { ok: true, key_id: key.id, key_name: key.name } : { ok: false, why: "signature does not match this request" };
 }
 
-// Used by the tests and the demo, standing in for the person's device. The daemon never holds a private key.
 export function signAsDevice(doc, pkcs8, keyId) {
   const key = crypto.createPrivateKey({ key: Buffer.from(pkcs8, "base64url"), format: "der", type: "pkcs8" });
   return `sayso1.${keyId}.${b64url(crypto.sign(null, signingBytes(doc), key))}`;

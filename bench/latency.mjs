@@ -1,8 +1,4 @@
 #!/usr/bin/env node
-// How long from "a session needs input" to "the agent knows", measured on the real binary.
-// T0 is the moment the scripted model starts handing Claude Code the tool call. T1 is when each transport hands the
-// event to a client in this same process, so both ends share one clock.
-// Usage: node bench/latency.mjs [--runs 100] [--overhead-runs 40]
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -103,8 +99,6 @@ async function told() {
   return Object.fromEntries(Object.entries(samples).map(([k, v]) => [k, summary(v)]));
 }
 
-// What the gate costs every ordinary tool call: tool emitted to its result coming back, with and without sayso. The two
-// sides alternate so that drifting machine load falls on both.
 async function overhead() {
   const side = async (withSayso) => {
     const rig = new Rig();

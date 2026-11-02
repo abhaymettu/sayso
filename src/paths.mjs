@@ -6,7 +6,6 @@ export const DEFAULT_PORT = 7428;
 export const DEFAULT_PAGE = "https://abhaymettu.github.io/sayso/";
 
 // Hooks are registered with a 3600 s timeout, and without `onFailure: "block"` Claude Code runs the tool if that fires.
-// A hold therefore has to end well before it, whatever the policy file says. hooks/run.sh kills the gate at 3300 s.
 export const MAX_HOLD_SECONDS = 3000;
 
 export const HARDENED_HOME = "/var/lib/sayso";

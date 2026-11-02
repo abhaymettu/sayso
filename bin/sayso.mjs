@@ -36,9 +36,6 @@ function hasClaudeAncestor() {
   }
   return false;
 }
-// The variables can be stripped with `env -u`, so also walk the process tree. Both only raise the bar: a same-user process
-// can detach or edit the files directly, which is why the hardened install exists. Throwaway state in a temp folder, as in
-// the test rig, is not the guard and does not need guarding.
 const guardsRealState = () => path.resolve(paths.dir) === path.join(userInfo().homedir, ".sayso") || isHardened();
 const insideSession = () => !!process.env.CLAUDECODE || !!process.env.CLAUDE_CODE_ENTRYPOINT || (guardsRealState() && hasClaudeAncestor());
 const refuseInsideSession = (what) => {
@@ -56,7 +53,6 @@ const writeJson = (file, value) => {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.${process.pid}`;
   fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  // Run as root against a hardened install, a file has to stay readable by the daemon's own user.
   if (isHardened() && process.getuid?.() === 0) {
     const { uid, gid } = fs.statSync(path.dirname(file));
     fs.chownSync(temp, uid, gid);
@@ -69,13 +65,11 @@ const portOf = () => Number(process.env.SAYSO_PORT ?? readJson(paths.config, {})
 const claudeConfigDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude");
 const claudeSettingsPath = () => path.join(claudeConfigDir(), "settings.json");
 const MANAGED_SETTINGS = "/etc/claude-code/managed-settings.json";
-// The gate's --disable-sigusr1 needs this. An older Node refuses the flag, and every call is blocked.
 const NODE_NEEDED = "sayso needs Node 22.14 or newer";
 const nodeIsNewEnough = () => {
   const [major, minor] = process.versions.node.split(".").map(Number);
   return major > 22 || (major === 22 && minor >= 14);
 };
-// The version the hook facts were measured on, and so the oldest known to block on a hook failure.
 const MEASURED_CLAUDE = [2, 1, 303];
 
 function askDaemon(message, timeoutMs = 3000) {
@@ -109,7 +103,6 @@ async function ensureDaemon(root = appRoot) {
     await askDaemon({ op: "status" }, 500);
     return true;
   } catch {}
-  // systemd owns a hardened daemon. One started here could not bind its port.
   if (isHardened()) return false;
   const child = spawn(process.execPath, ["--disable-sigusr1", path.join(root, "src", "server.mjs")], { detached: true, stdio: "ignore", env: process.env });
   child.unref();
@@ -125,14 +118,10 @@ async function ensureDaemon(root = appRoot) {
 
 const reload = () => askDaemon({ op: "reload" }).catch(() => {});
 
-// A repository's `env` can set these for every process Claude Code starts. The loader's run before any program's first line,
-// the shell's are ignored by the hooks' own shell and cleared here for anything else that starts one.
 const REPOSITORY_ENV_REACH = ["CLAUDE_CODE_SHELL_PREFIX", "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV", "ZDOTDIR", "PS4"];
 const MARK = "/hooks/run.sh";
 const isOurs = (hook) => typeof hook?.command === "string" && hook.command.includes(MARK) && hook.command.includes("sayso");
 
-// A repository's settings can set `env` for the hook process, so hooks/run.sh clears it and these reach the gate as arguments.
-// They come after the values it forwards, so they win.
 function hookTable(root, pins) {
   const shared = JSON.parse(fs.readFileSync(path.join(root, "hooks", "hooks.json"), "utf8")).hooks;
   const assigned = Object.entries(pins).map(([name, value]) => `${name}=${value}`);
@@ -356,7 +345,6 @@ async function doctor() {
   try {
     status = await askDaemon({ op: "status" }, 1000);
   } catch {}
-  // Without root a hardened install keeps the owner's door shut, so ask the one door anyone can.
   const healthy = status || (isHardened() && (await fetch(`http://127.0.0.1:${portOf()}/health`, { signal: AbortSignal.timeout(1000) }).then((r) => r.ok, () => false)));
   check(!!healthy, status ? `daemon pid ${status.pid}, port ${status.port}` : healthy ? `daemon answers on port ${portOf()}` : "daemon not running", "it starts with the next session, or run: sayso daemon start");
   try {
@@ -386,7 +374,6 @@ async function setup() {
   fs.mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
   const root = copyApp();
   const settingsFile = flag("plugin") ? null : installHooks(root);
-  // A plugin's hooks can't carry this path, and it beats guessing among folders any process of this user can write to.
   if (flag("plugin")) fs.writeFileSync(path.join(paths.dir, "node-path"), `${process.execPath}\n`, { mode: 0o600 });
   const link = linkCli(root);
   const up = await ensureDaemon(root);
@@ -430,8 +417,6 @@ async function uninstall() {
   console.log(`Removed sayso's hooks from ${file}.${flag("purge") ? " State deleted." : ` State and audit log kept in ${paths.dir}.`}`);
 }
 
-// Claude Code cannot remove managed hooks from user settings, and a session running as you cannot signal another user's
-// daemon, reach its owner socket or rewrite files it does not own. This is the difference between a seatbelt and a lock.
 function stopDaemonAt(sock) {
   return new Promise((resolve) => {
     const socket = net.connect(sock);
@@ -468,7 +453,6 @@ async function harden() {
   fs.symlinkSync(path.join(lib, "bin", "sayso.mjs"), "/usr/local/bin/sayso");
 
   fs.mkdirSync(HARDENED_HOME, { recursive: true, mode: 0o755 });
-  // Agents and devices from the personal install move over, so hardening does not mean pairing again.
   const invokingHome = () => {
     if (!process.env.SUDO_USER) die("run this through sudo from your own account, so sayso can find your personal install");
     const home = spawnSync("getent", ["passwd", process.env.SUDO_USER], { encoding: "utf8" }).stdout?.split(":")[5];
@@ -511,7 +495,6 @@ ReadWritePaths=${HARDENED_HOME}
 WantedBy=multi-user.target
 `,
   );
-  // It would hold the port, and the hardened daemon could not start.
   await stopDaemonAt(personal.ownerSock);
   run("systemctl", "daemon-reload");
   run("systemctl", "enable", "--now", "sayso.service");

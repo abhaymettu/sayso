@@ -1,4 +1,3 @@
-// The daemon's state and every rule about who may decide what. No sockets here, so each rule is testable directly.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,18 +7,13 @@ import { RISKS, matchesPassRule, matchesToolRule } from "./policy.mjs";
 import { faithful, forDisplay, redact } from "./redact.mjs";
 import { encodeDoc, verifyApproval } from "./sign.mjs";
 
-/** @typedef {"pending"|"approved"|"denied"|"answered"|"expired"|"cancelled"} RequestStatus */
-/** @typedef {{type: "agent"|"human"|"owner"|"system", name: string, key_id?: string, via?: string}} Actor */
-
 const MAX_BAD_SIGNATURES = 3;
 const MAX_EVENTS = 2000;
 const MAX_PENDING_PER_SESSION = 8;
 const MAX_PENDING = 64;
 const TEXT_LIMIT_MS = 2000;
 const REDACTED = "part of this is hidden as a possible secret, and the hidden part could be a command or a path";
-// A key's or token's own shape can't hold a command. What these markers replaced could, so nobody can sign over one.
 const HIDES_ANYTHING = /\[redacted(?: blob| hex| encoded)?\]/;
-// A session writes these fields itself, and they reach the agent outside `untrusted`, so only known values get that far.
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,128}$/;
 const KINDS = new Set(["tool", "question", "plan", "prompt"]);
@@ -53,8 +47,6 @@ function look(text, limit) {
   return redact(text) === String(text ?? "") ? display : { ...display, warnings: [...display.warnings, REDACTED] };
 }
 
-// One thread serves every session, so text a session chose must not be able to stall it. Too slow to check for secrets
-// means it is not shown at all, never that it is shown raw.
 function shown(text, limit = 2000) {
   if (String(text ?? "").length < 1024) return look(text, limit);
   try {
@@ -66,9 +58,6 @@ function shown(text, limit = 2000) {
 
 const clip = (text, limit = 2000) => shown(text, limit).text;
 
-// What a person reads before signing. Only an input with nothing but these fields gets the readable form. Anything else is
-// JSON, so a session can't pick a harmless field to show and keep the real one out of sight. A Bash description and timeout
-// change nothing that runs.
 function summarizeInput(tool, input) {
   if (!input || typeof input !== "object") return "";
   const only = (...names) => Object.keys(input).every((field) => names.includes(field));
@@ -78,7 +67,6 @@ function summarizeInput(tool, input) {
   return JSON.stringify(input, null, 1);
 }
 
-// JSON escapes control characters into plain text, so hidden characters are looked for in the values themselves.
 function hiddenInFields(input) {
   const warnings = new Set();
   JSON.stringify(input ?? null, (key, value) => {
@@ -88,7 +76,6 @@ function hiddenInFields(input) {
   return warnings;
 }
 
-// Keys the hashes in the audit log. A plain hash of a redacted input cracks with a wordlist.
 function auditKey(file) {
   try {
     return fs.readFileSync(file);
@@ -143,7 +130,6 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     else emit("session.state", { session_id: s.session_id, untrusted, state: next });
   }
 
-  // Hook reports run as separate processes and can arrive out of order, so each carries the time it started.
   function report(input) {
     if (!SESSION_ID.test(input?.session_id ?? "")) return;
     const t = Number(input.t) || now();
@@ -164,8 +150,8 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
   }
 
   // Claude Code leaves a PermissionRequest hook running after a keyboard yes, so the tool finishing is the only sign the
-  // dialog is gone. This comes from the session, so it can only let go of a hold, leaving any dialog to the keyboard. An
-  // answered question comes back with its answers added to the input, so a question matches on the tool alone.
+  // dialog is gone. An answered question comes back with its answers added to the input, so a question matches on the
+  // tool alone.
   function closeAnsweredDialog({ session_id, tool_name, input_sha256 }) {
     const held = [...requests.values()].find((r) => r.dialog && r.status === "pending" && r.session_id === session_id && r.tool === tool_name && (r.kind === "question" || r.input_sha256 === input_sha256));
     if (held) settle(held, "cancelled", { type: "session", name: "the session reports it finished" }, { decision: "closed" });
@@ -189,8 +175,6 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     return onDecision({ decision: "deny", reason });
   }
 
-  // A pass rule lets a flagged call run with nobody asked, so this is the only record that it did. A dialog that comes
-  // after a passed call runs nothing by itself, so it asks without logging.
   function passRule({ session_id, tool, risk, name_only, input, dialog }) {
     if (risk === "catastrophic" || risk === "self") return { pass: false };
     let pass = false;
@@ -231,7 +215,6 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
       display,
       questions: kind === "question" ? questionsOf(input) : undefined,
       raw_input: input,
-      // Only to match the session's own report of this call. It never leaves the daemon, so it needs no key.
       input_sha256: crypto.createHash("sha256").update(JSON.stringify(input ?? null)).digest("hex"),
       input_hmac: inputHmac(input),
       approver: kind === "question" ? "agent" : (state.policy.approver[risk] ?? "human"),
@@ -243,10 +226,8 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
       onDecision,
     };
     if (display.truncated || (kind !== "question" && display.warnings.length)) request.approver = "human";
-    // A signature says the person read this. Past these two they could not have, and a signature would release the full input.
     request.unread = kind !== "question" && (display.truncated || HIDES_ANYTHING.test(display.text));
 
-    // Nobody registered, nobody to ask. A headless run should find out now, not after the full hold.
     if (!state.agents.length && !attended) {
       return refuseRequest(refused, "no agent registered", "sayso: this needs an answer and no agent is connected, so it was not run.");
     }
@@ -322,7 +303,6 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
   function deny(id, actor, reason) {
     const { request: r, error } = pendingRequest(id);
     if (error) return error;
-    // The session's model reads this. Under a policy with messages off, an injected agent must not be able to speak to it here.
     const said = reason && state.policy.messages ? ` (${clip(reason, 200)})` : "";
     settle(r, "denied", actor, { decision: "deny", reason: `sayso: denied by ${actor.name}${said}. Do not try an equivalent command. Tell the user what you wanted to do.` }, reason ? { reason: clip(reason, 200) } : {});
     return { status: "denied", request: view(r) };
@@ -394,7 +374,6 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     if (r?.status === "pending") settle(r, "expired", { type: "system", name: "timeout" }, { decision: "deny", reason: "sayso: no answer in time, so it was not run. Tell the user what you wanted to do." });
   }
 
-  // The hook's connection died: the session was interrupted, exited or crashed. Nothing is waiting for an answer now.
   function cancel(id) {
     const r = requests.get(id);
     if (r?.status === "pending") {

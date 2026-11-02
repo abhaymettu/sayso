@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// Runs inside every Claude Code hook. By default Claude Code treats a crash, a kill or a timeout here as "carry on" and runs
-// the tool, so hooks/run.sh turns any non-zero exit into a block, and every path below must end in an explicit answer.
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -56,8 +54,6 @@ function connect(retryMs) {
   });
 }
 
-// True only for a person's terminal. A wrong guess either way stays safe: a false "attended" gets a dialog nobody can
-// answer, which runs nothing, and a false "unattended" gets a hold without the dialog.
 function isAttended() {
   if (process.env.CLAUDE_CODE_SESSION_ATTENDED === "0") return false;
   const pid = process.env.CLAUDE_PID;
@@ -79,13 +75,11 @@ function holdAtDaemon(payload) {
   return new Promise((resolve) => {
     const started = Date.now();
     const absolute = started + MAX_HOLD_SECONDS * 1000 + 30000;
-    // Until the daemon says `opened`, only this ends the wait. A stopped daemon still accepts connections.
+    // A stopped daemon still accepts connections.
     let deadline = started + OPEN_LIMIT_MS;
     let socket = null;
     const wrapper = process.ppid;
-    // Wall clock, so a hold that spans a laptop sleep ends on wake rather than running on.
     setInterval(() => {
-      // With the wrapper gone the session has moved on, and nobody should be asked to sign a call that can no longer run.
       if (process.ppid !== wrapper) process.exit(2);
       if (Date.now() <= deadline) return;
       resolve({ failure: "no answer from the sayso daemon in time" });
@@ -118,7 +112,6 @@ function holdAtDaemon(payload) {
   });
 }
 
-// One question and one answer. A stuck daemon counts as no answer.
 function ask(message, retryMs = 0) {
   return new Promise((resolve) => {
     setTimeout(() => resolve(null), ASK_LIMIT_MS + retryMs);
@@ -141,14 +134,11 @@ function ask(message, retryMs = 0) {
   });
 }
 
-// Most tool calls stop at the existsSync. The daemon hands over the text, so this works when the hook cannot write there.
 async function takeMail(sessionId) {
   if (!fs.existsSync(path.join(paths.mail, encodeURIComponent(sessionId ?? "")))) return null;
   return (await ask({ op: "take_mail", session_id: sessionId }))?.text ?? null;
 }
 
-// A timer on this thread never fires while the classifier holds it, so the limit has to interrupt from outside. Anything
-// that stops it finishing could be hiding what it would have found, which is why the warning sends it to the person.
 function verdictFor(input) {
   const ctx = { home: homedir(), cwd: input.cwd ?? process.cwd(), stateDir: paths.dir, configDir: process.env.CLAUDE_CONFIG_DIR || undefined };
   try {
@@ -160,7 +150,6 @@ function verdictFor(input) {
   }
 }
 
-// The daemon holds the policy and the log, so a pass rule only counts once the daemon has checked it and written it down.
 async function passedByRule(input, verdict) {
   if ((input.tool_name !== "Bash" && !verdict.nameOnly) || verdict.risk === "catastrophic" || verdict.risk === "self") return false;
   const reply = await ask({ op: "pass", session_id: input.session_id, risk: verdict.risk, name_only: verdict.nameOnly, tool: input.tool_name, input: input.tool_input, dialog: input.hook_event_name !== "PreToolUse" }, ASK_LIMIT_MS);
@@ -197,7 +186,6 @@ async function gate(input) {
   if (answer.decision === "allow") permissionRequest({ behavior: "allow" });
   if (answer.decision === "answer") permissionRequest({ behavior: "allow", updatedInput: answer.updatedInput });
   if (answer.decision === "deny" && !answer.failure) permissionRequest({ behavior: "deny", message: answer.reason ?? "sayso: denied" });
-  // A flagged call with no answer is a no. An ordinary prompt can stay on screen, since the dialog itself runs nothing.
   if (verdict) permissionRequest({ behavior: "deny", message: answer.failure ? failClosed(answer.failure) : (answer.reason ?? "sayso: no answer") });
   process.exit(0);
 }
