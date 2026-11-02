@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { openAudit } from "./audit.mjs";
-import { matchesPassRule } from "./policy.mjs";
+import { matchesPassRule, matchesToolRule } from "./policy.mjs";
 import { faithful, forDisplay, redact } from "./redact.mjs";
 import { encodeDoc, verifyApproval } from "./sign.mjs";
 
@@ -181,12 +181,15 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
 
   // A pass rule lets a flagged call run with nobody asked, so this is the only record that it did. A dialog that comes
   // after a passed call runs nothing by itself, so it asks without logging.
-  function passRule({ session_id, tool, risk, input, dialog }) {
-    if (tool !== "Bash" || risk === "catastrophic" || risk === "self") return { pass: false };
+  function passRule({ session_id, tool, risk, name_only, input, dialog }) {
+    if (risk === "catastrophic" || risk === "self") return { pass: false };
     let pass = false;
-    try {
-      pass = within(() => matchesPassRule(input?.command, state.policy.pass));
-    } catch {}
+    if (tool !== "Bash") pass = name_only === true && matchesToolRule(tool, state.policy.trust_tools);
+    else {
+      try {
+        pass = within(() => matchesPassRule(input?.command, state.policy.pass));
+      } catch {}
+    }
     if (pass && !dialog) audit.append({ session: session_id, tool, risk, input_hmac: inputHmac(input), decision: "passed", actor: { type: "policy", name: "pass rule" } });
     return { pass };
   }

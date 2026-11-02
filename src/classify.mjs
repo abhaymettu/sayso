@@ -1133,6 +1133,7 @@ function walkString(source, st) {
 
 const TOO_DEEP = 'nesting too deep to read';
 const TOO_MANY = 'too many nested strings to read';
+const OUT_OF_TIME = 'took too long to read';
 const HAS_BLANK = /\s/;
 const HAS_QUOTE = /["'`]/;
 const RM_RECURSIVE = /(?:^|[\s;&|(`"'])(rm\s+-{1,2}[a-zA-Z-]*[rR][^\n"'`)\\]*)/;
@@ -3149,7 +3150,7 @@ function readCommand(command, ctx) {
     walkTokens(lex(command), st);
   } catch (error) {
     // Stack overflow from absurd nesting lands here too: the guard fails closed, and keeps whatever it already saw.
-    const why = error instanceof OutOfTime ? 'took too long to read' : error instanceof ParseFailure ? 'shell syntax could not be parsed' : 'classifier could not read the command';
+    const why = error instanceof OutOfTime ? OUT_OF_TIME : error instanceof ParseFailure ? 'shell syntax could not be parsed' : 'classifier could not read the command';
     if (!st) return opaqueVerdict(why);
     flag(st, OPAQUE, why);
   }
@@ -3282,20 +3283,27 @@ function worstVerdict(verdicts) {
   return { risk, why: [...new Set(seen.flatMap((verdict) => verdict.why))] };
 }
 
+const TOO_MANY_ARGUMENTS = 'too many nested arguments to read';
+
 function classifyMcpTool(toolName, toolInput, ctx) {
   const separator = toolName.indexOf('__', 'mcp__'.length);
   if (separator < 0) return null;
   const tool = camelToSnake(toolName.slice(separator + 2));
   const readOnly = MCP_READ_ONLY.test(tool);
-  const verdicts = [];
-  if (MCP_OUTWARD_TOOL.test(tool)) verdicts.push({ risk: OUTWARD, why: ['mcp tool name looks like an action with outside effects'] });
-  if (!readOnly && MCP_RUNS_THINGS.test(tool)) verdicts.push({ risk: OPAQUE, why: ['mcp tool name looks like it runs commands or writes files'] });
+  const named = [];
+  if (MCP_OUTWARD_TOOL.test(tool)) named.push({ risk: OUTWARD, why: ['mcp tool name looks like an action with outside effects'] });
+  if (!readOnly && MCP_RUNS_THINGS.test(tool)) named.push({ risk: OPAQUE, why: ['mcp tool name looks like it runs commands or writes files'] });
   const found = { items: [], overflow: false };
   mcpStrings(toolInput, null, found, 0);
-  if (found.overflow) verdicts.push(opaqueVerdict('too many nested arguments to read'));
-  for (const item of found.items) verdicts.push(classifyMcpString(item, readOnly, ctx));
-  return worstVerdict(verdicts);
+  const read = found.overflow ? [opaqueVerdict(TOO_MANY_ARGUMENTS)] : [];
+  for (const item of found.items) read.push(classifyMcpString(item, readOnly, ctx));
+  const verdict = worstVerdict([...named, ...read]);
+  // A person can trust a tool's name in the policy. What its arguments say still counts, so the hook has to know which it was.
+  return verdict && !worstVerdict(read) ? { ...verdict, nameOnly: true } : verdict;
 }
+
+/** The verdict may be missing what it never got to, so an agent shouldn't be the one to wave it through. */
+export const readToTheEnd = (verdict) => !verdict?.why?.some((why) => [TOO_DEEP, TOO_MANY, OUT_OF_TIME, TOO_MANY_ARGUMENTS].includes(why));
 
 /** @param {string} toolName @param {object} toolInput @param {Ctx} ctx @returns {Verdict|null} */
 export function classifyToolCall(toolName, toolInput, ctx) {

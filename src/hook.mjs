@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { classifyToolCall } from "./classify.mjs";
+import { classifyToolCall, readToTheEnd } from "./classify.mjs";
 import { MAX_HOLD_SECONDS, statePaths } from "./paths.mjs";
 
 const paths = statePaths();
@@ -150,7 +150,8 @@ async function takeMail(sessionId) {
 function verdictFor(input) {
   const ctx = { home: homedir(), cwd: input.cwd ?? process.cwd(), stateDir: paths.dir, configDir: process.env.CLAUDE_CONFIG_DIR || undefined };
   try {
-    return vm.runInNewContext("read()", { read: () => classifyToolCall(input.tool_name, input.tool_input ?? {}, ctx) }, { timeout: READ_LIMIT_MS });
+    const verdict = vm.runInNewContext("read()", { read: () => classifyToolCall(input.tool_name, input.tool_input ?? {}, ctx) }, { timeout: READ_LIMIT_MS });
+    return readToTheEnd(verdict) ? verdict : { ...verdict, warnings: [...(verdict.warnings ?? []), "sayso could not finish reading this"] };
   } catch (error) {
     const unread = error.code === "ERR_SCRIPT_EXECUTION_TIMEOUT" ? "ran out of time" : `failed: ${error.message}`;
     return { risk: "opaque", why: [`sayso could not read this command: ${unread}`], warnings: ["sayso could not finish reading this"] };
@@ -159,8 +160,8 @@ function verdictFor(input) {
 
 // The daemon holds the policy and the log, so a pass rule only counts once the daemon has checked it and written it down.
 async function passedByRule(input, verdict) {
-  if (input.tool_name !== "Bash" || verdict.risk === "catastrophic" || verdict.risk === "self") return false;
-  const reply = await ask({ op: "pass", session_id: input.session_id, risk: verdict.risk, tool: input.tool_name, input: input.tool_input, dialog: input.hook_event_name !== "PreToolUse" }, ASK_LIMIT_MS);
+  if ((input.tool_name !== "Bash" && !verdict.nameOnly) || verdict.risk === "catastrophic" || verdict.risk === "self") return false;
+  const reply = await ask({ op: "pass", session_id: input.session_id, risk: verdict.risk, name_only: verdict.nameOnly, tool: input.tool_name, input: input.tool_input, dialog: input.hook_event_name !== "PreToolUse" }, ASK_LIMIT_MS);
   return reply?.pass === true;
 }
 

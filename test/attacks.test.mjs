@@ -171,6 +171,27 @@ describe("a prompt-injected agent", () => {
       await finished;
     }));
 
+  test("trusting an MCP tool's name still reads what it was given", () =>
+    withRig({ policy: { trust_tools: ["mcp__box__run_*"] } }, [FINISH], async (rig) => {
+      const call = (tool_name, command) => {
+        const hook = spawn("sh", [path.join(rig.home, "app", "hooks", "run.sh"), "gate"], { cwd: rig.cwd, env: rig.env({ CLAUDE_CODE_SESSION_ATTENDED: "0" }), stdio: ["pipe", "ignore", "ignore"] });
+        hook.stdin.end(JSON.stringify({ hook_event_name: "PreToolUse", session_id: "direct", cwd: rig.cwd, permission_mode: "bypassPermissions", tool_name, tool_input: { command } }));
+        return new Promise((resolve) => hook.on("exit", resolve));
+      };
+      assert.equal(await call("mcp__box__run_thing", "ls"), 0, "a trusted name with a harmless argument runs");
+      assert.equal(rig.audit().at(-1).decision, "passed");
+      const flagged = call("mcp__box__run_thing", "rm -rf victim");
+      const held = await rig.nextRequest();
+      assert.equal(held.risk, "destructive", "the argument still counts");
+      await rig.tool("deny", { request_id: held.id });
+      await flagged;
+      const untrusted = call("mcp__other__run_thing", "ls");
+      const named = await rig.nextRequest();
+      assert.equal(named.tool, "mcp__other__run_thing", "another server's tool is still held by name");
+      await rig.tool("deny", { request_id: named.id });
+      await untrusted;
+    }));
+
   test("a broken policy file falls back to strict", () =>
     withRig({}, [RM, FINISH], async (rig) => {
       fs.writeFileSync(path.join(rig.home, "policy.json"), '{"preset": "trusted-agent", ');

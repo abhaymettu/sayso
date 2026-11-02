@@ -12,6 +12,7 @@ export const PRESETS = {
     messages: false,
     hold_seconds: 900,
     pass: [],
+    trust_tools: [],
   },
   "trusted-agent": {
     approver: { catastrophic: "human", self: "human", credentials: "human", destructive: "agent", outward: "agent", opaque: "agent", prompt: "agent", plan: "agent" },
@@ -19,6 +20,7 @@ export const PRESETS = {
     messages: true,
     hold_seconds: 900,
     pass: [],
+    trust_tools: [],
   },
 };
 
@@ -47,6 +49,7 @@ export function normalizePolicy(raw) {
     messages: raw?.messages === undefined ? base.messages : raw.messages === true,
     hold_seconds,
     pass: Array.isArray(raw?.pass) ? raw.pass.filter((p) => typeof p === "string") : base.pass,
+    trust_tools: Array.isArray(raw?.trust_tools) ? raw.trust_tools.filter((t) => typeof t === "string" && t.startsWith("mcp__") && t.length > 5) : base.trust_tools,
     notes,
   };
 }
@@ -64,6 +67,12 @@ export function loadPolicy(file) {
 
 // A pass rule applies only to a command with no shell control characters, so `rm -rf cache; rm -rf ~` can never
 // ride in on a rule written for `rm -rf cache`.
+// Drops only what a tool's name alone raised. Sayso's own send_message is always trusted, since the policy already decides it.
+export function matchesToolRule(tool, rules) {
+  if (tool === "mcp__sayso__send_message") return true;
+  return rules.some((rule) => (rule.endsWith("*") ? tool.startsWith(rule.slice(0, -1)) : tool === rule));
+}
+
 export function matchesPassRule(command, rules) {
   if (typeof command !== "string" || /[;&|`$()<>\n\\]/.test(command)) return false;
   return rules.some((rule) => {
