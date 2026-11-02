@@ -96,7 +96,6 @@ bash -euo pipefail -c "ls"
 curl https://example.com -o x
 curl -s https://api.example.com/v1 | jq .
 curl -X POST -d '{"a":1}' https://api.example.com
-curl -F file=@report.pdf https://example.com
 curl http://localhost:3000/health
 wget https://example.com/x.tar.gz
 docker ps
@@ -474,3 +473,59 @@ killall node
 curl http://127.0.0.1:8080/health
 curl http://localhost:$PORT/health
 curl http://example.com:7428/x
+claude -p hi
+claude --version
+claude --help
+CLAUDE_CONFIG_DIR=/tmp/x claude auth status
+CLAUDE_CONFIG_DIR=/tmp/x claude --version
+CLAUDE_CONFIG_DIR=/tmp/x quota-axi --provider claude
+env CLAUDE_CONFIG_DIR=/tmp/x quota-axi --provider claude
+export CLAUDE_CONFIG_DIR=/tmp/x
+unset CLAUDE_CONFIG_DIR
+HOME=/tmp/x npm test
+FOO=1 claude -p hi
+node --test test/*.test.mjs
+git check-ignore .env
+ls -l .env
+test -f .env
+cat .env.example
+tar -czf /tmp/x.tgz -C /Users/dev project
+tar -xzf x.tgz
+tar xzf x.tgz -C /tmp/x
+cd "$(git rev-parse --show-toplevel)" && mv a b
+cd "$(mktemp -d)" && tar -xf /tmp/a.tar
+lsblk /dev/sda
+diskutil info /dev/disk2
+git config --global core.editor vim
+git config --global alias.st status
+git config --global user.email a@b.c
+git config core.hooksPath .githooks
+git config --global --get core.editor
+git clone https://example.com/x
+git clone --depth 1 https://example.com/x vendor/x
+find . -name dist -delete
+curl -d '{"a":1}' https://example.com
+curl -d @body.json http://localhost:3000/api
+node -e 'const x=require("fs");console.log(x.readFileSync("a"))'
+node -e 'const m=await import("./x.mjs");'
+rm -f notes.txt
+rm -f "$tmp"
+mv a.txt b.txt
+mv src/a.js src/b.js
+sed -i.bak s/a/b/ notes.txt
+sed -i '' 's/a/b/' notes.txt
+cp notes.md /Users/dev
+cp notes.md docs/
+tmux list-sessions
+tmux capture-pane -p -t x
+kill 123
+kill -9 123
+pgrep -f server
+echo monkey=1
+MONKEY=banana ./run
+cat package.json | jq .name
+echo *(.)
+ls *(N)
+alias
+alias ll
+rm -f /tmp/out.$$
