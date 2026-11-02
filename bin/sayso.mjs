@@ -119,21 +119,22 @@ async function ensureDaemon(root = appRoot) {
 
 const reload = () => askDaemon({ op: "reload" }).catch(() => {});
 
+// A repository's `env` can set these for every process Claude Code starts. The loader's run before any program's first line,
+// the shell's are ignored by the hooks' own shell and cleared here for anything else that starts one.
+const REPOSITORY_ENV_REACH = ["CLAUDE_CODE_SHELL_PREFIX", "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV", "PS4"];
 const MARK = "/hooks/run.sh";
 const isOurs = (hook) => typeof hook?.command === "string" && hook.command.includes(MARK) && hook.command.includes("sayso");
 
-const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
-
-// The shared table clears the environment, because a repository's settings can set `env` for the hook process. Values set
-// here come after the ones it forwards, so they win. The absolute paths in it are why a repository's PATH can't reach it.
+// A repository's settings can set `env` for the hook process, so hooks/run.sh clears it and these reach the gate as arguments.
+// They come after the values it forwards, so they win.
 function hookTable(root, pins) {
   const shared = JSON.parse(fs.readFileSync(path.join(root, "hooks", "hooks.json"), "utf8")).hooks;
-  const assigned = Object.entries(pins).map(([name, value]) => `${name}=${shellQuote(value)} `).join("");
+  const assigned = Object.entries(pins).map(([name, value]) => `${name}=${value}`);
   const out = {};
   for (const [event, groups] of Object.entries(shared))
     out[event] = groups.map((group) => ({
       ...group,
-      hooks: group.hooks.map((hook) => ({ ...hook, command: hook.command.replaceAll("${CLAUDE_PLUGIN_ROOT}", root).replace("/bin/sh ", `${assigned}/bin/sh `) })),
+      hooks: group.hooks.map((hook) => ({ ...hook, command: hook.command.replaceAll("${CLAUDE_PLUGIN_ROOT}", root), args: [...hook.args, ...assigned] })),
     }));
   return out;
 }
@@ -509,11 +510,10 @@ WantedBy=multi-user.target
   if (fs.existsSync(managedFile)) managed = JSON.parse(fs.readFileSync(managedFile, "utf8"));
   removeOurHooks(managed);
   managed.hooks ??= {};
-  // HOME is left out, so the gate reads the real one from the password database.
   for (const [event, groups] of Object.entries(hookTable(lib, { SAYSO_NODE: nodePath, SAYSO_HOME: HARDENED_HOME, SAYSO_SOCK: HARDENED_SOCK })))
-    managed.hooks[event] = [...(managed.hooks[event] ?? []), ...groups.map((g) => ({ ...g, hooks: g.hooks.map((h) => ({ ...h, command: h.command.replace(' HOME="$HOME"', "") })) }))];
-  // These act before any hook command does, so clearing them there is too late. Managed settings beat a repository's.
-  managed.env = { ...managed.env, ...Object.fromEntries(["CLAUDE_CODE_SHELL_PREFIX", "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH"].map((name) => [name, ""])) };
+    managed.hooks[event] = [...(managed.hooks[event] ?? []), ...groups];
+  // These act before any code of ours does, so clearing them in the hook is too late. Managed settings beat a repository's.
+  managed.env = { ...managed.env, ...Object.fromEntries(REPOSITORY_ENV_REACH.map((name) => [name, ""])) };
   fs.writeFileSync(managedFile, `${JSON.stringify(managed, null, 2)}\n`, { mode: 0o644 });
 
   const personalSettings = path.join(invokingHome(), ".claude", "settings.json");

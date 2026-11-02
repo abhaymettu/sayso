@@ -147,7 +147,7 @@ describe("policy", () => {
       assert.ok(limit < table[event][0].hooks[0].timeout);
       assert.equal(table[event][0].hooks[0].onFailure, "block");
     }
-    for (const group of Object.values(table).flat()) for (const hook of group.hooks) assert.match(hook.command, /^\/usr\/bin\/env -i PATH=\/usr\/bin:\/bin:\/usr\/sbin:\/sbin .*\/bin\/sh /);
+    for (const group of Object.values(table).flat()) for (const hook of group.hooks) assert.deepEqual([hook.command, hook.args.length], ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", 1], "no shell starts a hook");
   });
   test("hold time stays under the hook timeout", () => {
     assert.equal(normalizePolicy({ hold_seconds: 99999 }).hold_seconds, 3000);

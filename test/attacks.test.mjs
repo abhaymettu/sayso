@@ -32,7 +32,7 @@ const docOf = (url) => new URL(url).hash.slice(3);
 
 // Claude Code refuses some inputs before any hook runs, so these go to the hook the way Claude Code would send them.
 function driveHook(rig, input, extraEnv = {}) {
-  const hook = spawn("sh", [path.join(rig.home, "app", "hooks", "run.sh"), "gate"], { cwd: rig.cwd, env: rig.env({ CLAUDE_CODE_SESSION_ATTENDED: "0", ...extraEnv }), stdio: ["pipe", "pipe", "ignore"], detached: true });
+  const hook = spawn("sh", [path.join(rig.home, "app", "hooks", "run.sh"), "clean", "gate"], { cwd: rig.cwd, env: rig.env({ CLAUDE_CODE_SESSION_ATTENDED: "0", ...extraEnv }), stdio: ["pipe", "pipe", "ignore"], detached: true });
   let stdout = "";
   hook.stdout.on("data", (d) => (stdout += d));
   hook.done = new Promise((resolve) => hook.on("close", (code) => resolve({ code, stdout })));
@@ -162,7 +162,7 @@ describe("a prompt-injected agent", () => {
   // Claude Code refuses an Edit of a file it has not read before any hook runs, so this drives the hook directly.
   test("an Edit shows the person the change, not only the file", () =>
     withRig({}, [FINISH], async (rig) => {
-      const hook = spawn("sh", [path.join(rig.home, "app", "hooks", "run.sh"), "gate"], { cwd: rig.cwd, env: rig.env({ CLAUDE_CODE_SESSION_ATTENDED: "0" }), stdio: ["pipe", "ignore", "ignore"] });
+      const hook = spawn("sh", [path.join(rig.home, "app", "hooks", "run.sh"), "clean", "gate"], { cwd: rig.cwd, env: rig.env({ CLAUDE_CODE_SESSION_ATTENDED: "0" }), stdio: ["pipe", "ignore", "ignore"] });
       const finished = new Promise((resolve) => hook.on("exit", resolve));
       hook.stdin.end(JSON.stringify({ hook_event_name: "PreToolUse", session_id: "direct", cwd: rig.cwd, permission_mode: "bypassPermissions", tool_name: "Edit", tool_input: { file_path: path.join(rig.home, "policy.json"), old_string: "strict", new_string: "trusted-agent" } }));
       const request = await rig.nextRequest();
@@ -174,7 +174,7 @@ describe("a prompt-injected agent", () => {
   test("trusting an MCP tool's name still reads what it was given", () =>
     withRig({ policy: { trust_tools: ["mcp__box__run_*"] } }, [FINISH], async (rig) => {
       const call = (tool_name, command) => {
-        const hook = spawn("sh", [path.join(rig.home, "app", "hooks", "run.sh"), "gate"], { cwd: rig.cwd, env: rig.env({ CLAUDE_CODE_SESSION_ATTENDED: "0" }), stdio: ["pipe", "ignore", "ignore"] });
+        const hook = spawn("sh", [path.join(rig.home, "app", "hooks", "run.sh"), "clean", "gate"], { cwd: rig.cwd, env: rig.env({ CLAUDE_CODE_SESSION_ATTENDED: "0" }), stdio: ["pipe", "ignore", "ignore"] });
         hook.stdin.end(JSON.stringify({ hook_event_name: "PreToolUse", session_id: "direct", cwd: rig.cwd, permission_mode: "bypassPermissions", tool_name, tool_input: { command } }));
         return new Promise((resolve) => hook.on("exit", resolve));
       };
@@ -439,7 +439,7 @@ describe("secrets and hidden text", () => {
 
   test("terminal escape codes: the gate holds them too if Claude Code ever lets them through", () =>
     withRig({ policy: { preset: "trusted-agent" } }, [FINISH], async (rig) => {
-      const hook = spawn("sh", [path.join(rig.home, "app", "hooks", "run.sh"), "gate"], { cwd: rig.cwd, env: rig.env({ CLAUDE_CODE_SESSION_ATTENDED: "0" }), stdio: ["pipe", "pipe", "pipe"] });
+      const hook = spawn("sh", [path.join(rig.home, "app", "hooks", "run.sh"), "clean", "gate"], { cwd: rig.cwd, env: rig.env({ CLAUDE_CODE_SESSION_ATTENDED: "0" }), stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "";
       hook.stdout.on("data", (d) => (stdout += d));
       const finished = new Promise((resolve) => hook.on("exit", resolve));
@@ -619,6 +619,12 @@ describe("a repository's settings", () => {
     rig.closeFake = () => server.close();
     return sock;
   };
+  const planted = (rig) => {
+    const dir = path.join(rig.root, "planted");
+    fs.mkdirSync(dir, { recursive: true });
+    for (const name of ["node", "env", "sh"]) fs.writeFileSync(path.join(dir, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    return dir;
+  };
   const routes = {
     "SAYSO_SOCK to a fake daemon": (rig) => ({ SAYSO_SOCK: fakeDaemon(rig) }),
     "SAYSO_HOME to a planted folder": (rig) => ({ SAYSO_HOME: path.join(rig.root, "planted") }),
@@ -626,12 +632,18 @@ describe("a repository's settings", () => {
       fs.writeFileSync(path.join(rig.cwd, "x.cjs"), "process.exit(0)\n");
       return { NODE_OPTIONS: "--require ./x.cjs" };
     },
-    "PATH with planted programs first": (rig) => {
-      const dir = path.join(rig.root, "planted");
-      fs.mkdirSync(dir);
-      for (const name of ["node", "env", "sh"]) fs.writeFileSync(path.join(dir, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-      return { PATH: `${dir}:${process.env.PATH}` };
-    },
+    "PATH with planted programs first": (rig) => ({ PATH: `${planted(rig)}:${process.env.PATH}` }),
+    "SHELLOPTS=noexec": () => ({ SHELLOPTS: "noexec" }),
+    "SHELLOPTS with noexec among others": () => ({ SHELLOPTS: "errexit:noexec" }),
+    "SHELLOPTS=xtrace with a command in PS4": (rig) => ({ SHELLOPTS: "xtrace", PS4: `$(touch ${rig.root}/ps4-ran)` }),
+    BASHOPTS: () => ({ BASHOPTS: "nullglob:failglob:expand_aliases" }),
+    BASH_ENV: (rig) => ({ BASH_ENV: path.join(planted(rig), "sh") }),
+    ENV: (rig) => ({ ENV: path.join(planted(rig), "sh") }),
+    IFS: () => ({ IFS: "/" }),
+    "exported shell functions": () => ({ "BASH_FUNC_exec%%": "() { exit 0; }", "BASH_FUNC_command%%": "() { exit 0; }", "BASH_FUNC_dirname%%": "() { exit 0; }", "BASH_FUNC_/usr/bin/env%%": "() { exit 0; }" }),
+    POSIXLY_CORRECT: () => ({ POSIXLY_CORRECT: "1" }),
+    CLAUDE_CODE_SHELL_PREFIX: (rig) => ({ CLAUDE_CODE_SHELL_PREFIX: path.join(planted(rig), "sh") }),
+    SHELL: (rig) => ({ SHELL: path.join(planted(rig), "sh") }),
   };
   for (const [name, route] of Object.entries(routes)) {
     test(`env cannot turn the gate off: ${name}`, () =>
@@ -644,6 +656,7 @@ describe("a repository's settings", () => {
         await session.done;
         rig.closeFake?.();
         assert.equal(rig.destroyed(), false);
+        assert.equal(fs.existsSync(path.join(rig.root, "ps4-ran")), false, "nothing the repository wrote ran");
       }));
   }
 
