@@ -216,7 +216,14 @@ function renderQr(text) {
 async function pair() {
   refuseInsideSession("sayso pair");
   const name = option("name") ?? "my phone";
-  const pageUrl = readJson(paths.config, {}).page_url ?? DEFAULT_PAGE;
+  const config = readJson(paths.config, {});
+  if (option("page")) {
+    const page = new URL(option("page"));
+    if (page.protocol !== "https:") die("--page must be an https URL. WebCrypto and a phone both need that.");
+    config.page_url = page.href.endsWith("/") ? page.href : `${page.href}/`;
+    writeJson(paths.config, config);
+  }
+  const pageUrl = config.page_url ?? DEFAULT_PAGE;
   const pairing = generatePairing();
   const url = `${pageUrl}#pair=${pairing.pkcs8}&id=${pairing.id}&name=${encodeURIComponent(name)}`;
   const showSecret = flag("print-url");

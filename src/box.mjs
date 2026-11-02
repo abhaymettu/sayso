@@ -104,9 +104,10 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
   }
 
   // Claude Code leaves a PermissionRequest hook running after a keyboard yes, so the tool finishing is the only sign the
-  // dialog is gone. This comes from the session, so it can only let go of a hold, leaving any dialog to the keyboard.
+  // dialog is gone. This comes from the session, so it can only let go of a hold, leaving any dialog to the keyboard. An
+  // answered question comes back with its answers added to the input, so a question matches on the tool alone.
   function closeAnsweredDialog({ session_id, tool_name, input_sha256 }) {
-    const held = [...requests.values()].find((r) => r.dialog && r.status === "pending" && r.session_id === session_id && r.tool === tool_name && r.input_sha256 === input_sha256);
+    const held = [...requests.values()].find((r) => r.dialog && r.status === "pending" && r.session_id === session_id && r.tool === tool_name && (r.kind === "question" || r.input_sha256 === input_sha256));
     if (held) settle(held, "cancelled", { type: "session", name: "answered at the terminal" }, { decision: "closed" });
   }
 

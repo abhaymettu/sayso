@@ -117,7 +117,8 @@ Any other `Host` header gets a 403, even with a good token. Hosted connectors th
 
 ## Works with
 
-"Tested" means I ran it end to end and you can rerun it.
+"Tested" means I ran it end to end and you can rerun it. On the session side, sayso covers terminal sessions, `claude -p`,
+and sessions hosted through the Agent SDK (`npm run test:sdk`).
 
 | Agent | State |
 |---|---|
@@ -157,7 +158,8 @@ The classifier also isn't a sandbox. It exists so that a tired model's `rm -rf` 
 process, use a VM.
 
 The approval page is the root of trust, since your phone signs what it shows. It is static, short enough to read, and its
-own security policy forbids network connections. You can read [the threat model](docs/threat-model.md) for the rest, and
+own security policy forbids network connections. The hosted copy shares its origin with the other Pages sites on my GitHub
+account, so to trust less, serve `docs/` yourself and run `sayso pair --page https://your-host/`. You can read [the threat model](docs/threat-model.md) for the rest, and
 [what Claude Code hooks actually do](docs/hook-facts.md) for the measurements it rests on. Hooks fail open, which surprised
 me: if a hook crashes or gets killed, the command runs.
 
@@ -185,6 +187,7 @@ Build on one of these if it fits. Nothing here does this exact job, as far as I 
 npm run test:smoke   # one install, one held rm -rf, about a minute
 npm run test:unit    # classifier corpus and logic
 npm run test:e2e     # the real Claude Code binary, end to end, with attacks
+npm run test:sdk     # a session hosted through the Agent SDK
 npm run test:live    # a real model as the agent, needs a logged-in claude
 npm run bench        # latency, writes bench/results.json
 node test/probe-hooks.mjs   # the hook facts, on your Claude Code version

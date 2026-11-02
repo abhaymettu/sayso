@@ -100,8 +100,11 @@ already running as you, aiming at a process it can find.
 ## What you are trusting
 
 - **The approval page.** Your device signs what the page shows, so the page is the root of trust. It has no network
-  access by its own security policy and makes no requests. It is static and short enough to read. If you do not want to
-  trust the hosted copy, serve `docs/` yourself and set `page_url`.
+  access by its own security policy and makes no requests. It is static and short enough to read. The hosted copy lives
+  on `abhaymettu.github.io`, an origin GitHub gives to all of one account's Pages sites. Browser storage belongs to the
+  origin, so any script on any page of that origin could ask your stored key for a signature, and a service worker at
+  the root could change what the page shows. So you are also trusting everything that account publishes to Pages. To
+  take that out, serve `docs/` from an origin of your own and run `sayso pair --page https://your-host/`.
 - **Your device's browser storage.** The key is stored non-extractable, so page code cannot read it out, though it could
   ask for signatures. Safari may clear site data after a week without visits, and then you pair again.
 - **Claude Code's hook contract.** Hooks can skip under `--bare`, `--safe-mode` and `disableAllHooks` unless they are
