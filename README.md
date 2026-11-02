@@ -63,6 +63,10 @@ gives a code that fails too. Three bad codes end the request. If nobody answers 
   <img src="assets/anatomy-light.svg" alt="A small bench instrument. A spring-loaded carriage on rails is the tool call. A latch catches it, a five-pin lock holds the latch shut, and only the key cut for this exact request turns the lock. A dial counts down the hold, and at zero a lever pulls the carriage back.">
 </picture>
 
+The same idea as a bench instrument. The carriage is the tool call, the latch is the gate, and the lock only turns for the
+key cut for this exact request. Your agent carries the key and can't cut one. The dial is the hold, and at zero a lever
+pulls the carriage back. [Watch it run](assets/anatomy-dark.mp4), with the dial time-lapsed.
+
 ## What can approve what
 
 The policy lives in `~/.sayso/policy.json`, and the default is strict. `sayso policy` prints it. From inside a session, a
