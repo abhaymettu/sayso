@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { classifyShell, classifyToolCall, RISK_ORDER } from '../src/classify.mjs';
 
@@ -142,4 +146,28 @@ test('a corpus-sized sweep stays well under a millisecond per command', () => {
   for (let round = 0; round < 20; round++) for (const command of all) classifyShell(command, CTX);
   const perCommand = (performance.now() - start) / (20 * all.length);
   assert.ok(perCommand < 1, `mean ${perCommand.toFixed(3)} ms per command`);
+});
+
+test('measure tool reports aggregates and keeps command text off stdout', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sayso-measure-'));
+  try {
+    const assistant = (id, command) => JSON.stringify({ type: 'assistant', cwd: '/x', message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+    writeFileSync(join(dir, 'a.jsonl'), `${assistant('1', 'rm -rf private-client-name')}\n${assistant('2', 'ls')}\n${assistant('2', 'ls')}\n`);
+    const tool = fileURLToPath(new URL('../tools/measure-classifier.mjs', import.meta.url));
+    const out = join(dir, 'sample.jsonl');
+    const run = spawnSync(process.execPath, [tool, '--dir', dir, '--show-flagged', '5', '--out', out], { encoding: 'utf8' });
+    assert.equal(run.status, 0);
+    assert.ok(!run.stdout.includes('private-client-name'));
+    const report = JSON.parse(run.stdout);
+    assert.equal(report.total_commands, 2);
+    assert.equal(report.flagged_per_risk.destructive, 1);
+    assert.equal(report.flagged_rate, 0.5);
+    assert.deepEqual(report.top_reasons, [{ why: 'recursive delete', count: 1 }]);
+    assert.equal(JSON.parse(readFileSync(out, 'utf8')).command, 'rm -rf private-client-name');
+    const refused = spawnSync(process.execPath, [tool, '--dir', dir, '--show-flagged', '5'], { encoding: 'utf8' });
+    assert.equal(refused.status, 2);
+    assert.equal(refused.stdout, '');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

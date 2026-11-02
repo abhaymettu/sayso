@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 
-const hashLine = (line) => crypto.createHash("sha256").update(line).digest("hex");
+const sealOf = (prev, body) => crypto.createHash("sha256").update(`${prev}\n${body}`).digest("hex");
 
-function lastHash(file) {
+function lastSeal(file) {
   try {
     const size = fs.statSync(file).size;
     if (!size) return "genesis";
@@ -12,21 +12,22 @@ function lastHash(file) {
     const buf = Buffer.alloc(length);
     fs.readSync(fd, buf, 0, length, size - length);
     fs.closeSync(fd);
-    const lines = buf.toString("utf8").trimEnd().split("\n");
-    return hashLine(lines[lines.length - 1]);
+    return JSON.parse(buf.toString("utf8").trimEnd().split("\n").at(-1)).seal ?? "genesis";
   } catch {
     return "genesis";
   }
 }
 
-// Each line carries the hash of the line before it, so an edit or a deletion anywhere breaks the chain.
+// Each line seals itself and the line before it, so an edit, a deletion or a reorder shows up on verify. The chain has
+// no secret: someone who can write the file could rebuild all of it. Only a hardened install takes the file out of reach.
 export function openAudit(file) {
-  let prev = lastHash(file);
+  let prev = lastSeal(file);
   return {
     append(entry) {
-      const line = JSON.stringify({ at: new Date().toISOString(), ...entry, prev });
-      fs.appendFileSync(file, `${line}\n`, { mode: 0o600 });
-      prev = hashLine(line);
+      const body = JSON.stringify({ at: new Date().toISOString(), ...entry });
+      const seal = sealOf(prev, body);
+      fs.appendFileSync(file, `${JSON.stringify({ ...JSON.parse(body), seal })}\n`, { mode: 0o600 });
+      prev = seal;
     },
   };
 }
@@ -49,8 +50,9 @@ export function verifyAudit(file) {
     } catch {
       return { ok: false, count, broken_at: count, why: "unparseable line" };
     }
-    if (parsed.prev !== prev) return { ok: false, count, broken_at: count, why: "hash chain broken" };
-    prev = hashLine(line);
+    const { seal, ...rest } = parsed;
+    if (seal !== sealOf(prev, JSON.stringify(rest))) return { ok: false, count, broken_at: count, why: "seal does not match" };
+    prev = seal;
   }
   return { ok: true, count };
 }

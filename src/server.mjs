@@ -8,7 +8,7 @@ import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { createBox } from "./box.mjs";
-import { DEFAULT_PAGE, DEFAULT_PORT, statePaths } from "./paths.mjs";
+import { DEFAULT_PAGE, DEFAULT_PORT, HARDENED_HOME, HARDENED_SOCK, statePaths } from "./paths.mjs";
 import { loadPolicy } from "./policy.mjs";
 import { redact } from "./redact.mjs";
 import { INSTRUCTIONS, TOOLS, TOOL_BY_NAME } from "./tools.mjs";
@@ -113,8 +113,9 @@ function pushToSinks(event, sinks, log) {
 
 export async function startDaemon(paths = statePaths()) {
   fs.mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
-  fs.mkdirSync(paths.mail, { recursive: true, mode: 0o700 });
-  fs.chmodSync(paths.dir, 0o700);
+  const hardened = paths.dir === HARDENED_HOME;
+  fs.mkdirSync(paths.mail, { recursive: true, mode: hardened ? 0o755 : 0o700 });
+  fs.chmodSync(paths.dir, hardened ? 0o755 : 0o700);
 
   const log = (line) => fs.appendFileSync(paths.log, `${new Date().toISOString()} ${line}\n`, { mode: 0o600 });
   let config = loadConfig(paths);
@@ -217,6 +218,16 @@ export async function startDaemon(paths = statePaths()) {
         conn.on("close", () => {
           if (wakers.get(message.session_id) === conn) wakers.delete(message.session_id);
         });
+        return;
+      }
+      case "take_mail": {
+        const file = path.join(paths.mail, encodeURIComponent(String(message.session_id ?? "")));
+        let text = null;
+        try {
+          text = fs.readFileSync(file, "utf8").trim() || null;
+          fs.rmSync(file, { force: true });
+        } catch {}
+        conn.end(`${JSON.stringify({ text })}\n`);
         return;
       }
       case "status":
@@ -347,8 +358,9 @@ export async function startDaemon(paths = statePaths()) {
 
   await new Promise((resolve, reject) => {
     hookServer.once("error", reject);
+    // Hardened, the daemon runs as another user, so the session's user needs the socket. It still cannot answer on it.
     const bind = () => hookServer.listen(paths.sock, () => {
-      fs.chmodSync(paths.sock, 0o600);
+      fs.chmodSync(paths.sock, paths.sock === HARDENED_SOCK ? 0o666 : 0o600);
       resolve();
     });
     if (!fs.existsSync(paths.sock)) return bind();

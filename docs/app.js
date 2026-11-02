@@ -468,7 +468,7 @@ function sampleFields() {
     tool: "Bash",
     kind: "tool",
     risk: "destructive",
-    why: ["Deletes a folder's contents for good, with no way back"],
+    why: ["recursive delete of a glob"],
     display: SAMPLE_COMMAND,
     warnings: [],
     expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),

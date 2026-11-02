@@ -114,18 +114,28 @@ function holdAtDaemon(payload, onOpened) {
   });
 }
 
+// Most tool calls stop at the existsSync. The daemon hands over the text, so this works when the hook cannot write there.
 function takeMail(sessionId) {
-  const file = path.join(paths.mail, encodeURIComponent(sessionId ?? ""));
-  if (!fs.existsSync(file)) return null;
-  const claimed = `${file}.${process.pid}`;
-  try {
-    fs.renameSync(file, claimed);
-    const text = fs.readFileSync(claimed, "utf8").trim();
-    fs.rmSync(claimed, { force: true });
-    return text || null;
-  } catch {
-    return null;
-  }
+  if (!fs.existsSync(path.join(paths.mail, encodeURIComponent(sessionId ?? "")))) return Promise.resolve(null);
+  return connect(0)
+    .then(
+      (socket) =>
+        new Promise((resolve) => {
+          let buffer = "";
+          socket.setEncoding("utf8");
+          socket.on("data", (chunk) => (buffer += chunk));
+          socket.on("error", () => resolve(null));
+          socket.on("close", () => {
+            try {
+              resolve(JSON.parse(buffer).text ?? null);
+            } catch {
+              resolve(null);
+            }
+          });
+          socket.write(`${JSON.stringify({ op: "take_mail", session_id: sessionId })}\n`);
+        }),
+    )
+    .catch(() => null);
 }
 
 function verdictFor(input) {
@@ -149,7 +159,7 @@ async function gate(input) {
   const tool = input.tool_name;
 
   if (input.hook_event_name === "PreToolUse") {
-    const mail = takeMail(input.session_id);
+    const mail = await takeMail(input.session_id);
     const context = mail ? { additionalContext: mail } : {};
     if (!verdict) {
       if (mail) writeAndExit({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: mail } });

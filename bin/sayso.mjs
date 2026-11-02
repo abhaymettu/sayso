@@ -8,7 +8,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { verifyAudit } from "../src/audit.mjs";
-import { DEFAULT_PAGE, DEFAULT_PORT, statePaths } from "../src/paths.mjs";
+import { DEFAULT_PAGE, DEFAULT_PORT, HARDENED_HOME, HARDENED_SOCK, isHardened, statePaths } from "../src/paths.mjs";
 import { PRESETS, loadPolicy } from "../src/policy.mjs";
 import { generatePairing } from "../src/sign.mjs";
 import { qrcodegen } from "../src/vendor/qrcodegen.mjs";
@@ -41,6 +41,12 @@ const writeJson = (file, value) => {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.${process.pid}`;
   fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  // Run as root against a hardened install, a file has to stay readable by the daemon's own user.
+  if (isHardened() && process.getuid?.() === 0) {
+    const { uid, gid } = fs.statSync(path.dirname(file));
+    fs.chownSync(temp, uid, gid);
+    if (path.basename(file) !== "agents.json") fs.chmodSync(temp, 0o644);
+  }
   fs.renameSync(temp, file);
 };
 
@@ -351,6 +357,105 @@ async function uninstall() {
   console.log(`Removed sayso's hooks from ${file}.${flag("purge") ? " State deleted." : ` State and audit log kept in ${paths.dir}.`}`);
 }
 
+// Claude Code cannot remove managed hooks from user settings, and a session running as you cannot signal another user's
+// daemon or rewrite files it does not own. This is the difference between a seatbelt and a lock.
+function harden() {
+  if (process.platform !== "linux") die("sayso harden is built and tested for Linux with systemd. On this system the default install still stops accidents and injected agents, but a hostile session running as you could remove it.");
+  if (process.getuid() !== 0) die("sayso harden needs root: sudo sayso harden");
+  refuseInsideSession("sayso harden");
+  const run = (cmd, ...rest) => {
+    const r = spawnSync(cmd, rest, { encoding: "utf8" });
+    if (r.status !== 0) die(`${cmd} ${rest.join(" ")}: ${r.stderr}`);
+    return r.stdout;
+  };
+  const lib = "/usr/local/lib/sayso";
+  const nodePath = fs.realpathSync(process.execPath);
+  if (spawnSync("id", ["-u", "sayso"]).status !== 0) run("useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "sayso");
+  const uid = Number(run("id", "-u", "sayso").trim());
+  const gid = Number(run("id", "-g", "sayso").trim());
+
+  fs.rmSync(lib, { recursive: true, force: true });
+  fs.mkdirSync(lib, { recursive: true, mode: 0o755 });
+  for (const entry of ["bin", "src", "hooks", "package.json"]) fs.cpSync(path.join(appRoot, entry), path.join(lib, entry), { recursive: true });
+  run("chown", "-R", "root:root", lib);
+  run("chmod", "-R", "go-w", lib);
+  fs.chmodSync(path.join(lib, "bin", "sayso.mjs"), 0o755);
+  fs.chmodSync(path.join(lib, "hooks", "run.sh"), 0o755);
+  fs.rmSync("/usr/local/bin/sayso", { force: true });
+  fs.symlinkSync(path.join(lib, "bin", "sayso.mjs"), "/usr/local/bin/sayso");
+
+  fs.mkdirSync(HARDENED_HOME, { recursive: true, mode: 0o755 });
+  // Agents and devices from the personal install move over, so hardening does not mean pairing again.
+  const personal = statePaths(path.join(process.env.SUDO_USER ? `/home/${process.env.SUDO_USER}` : homedir(), ".sayso"));
+  for (const name of ["agents", "keys", "policy", "config"]) {
+    if (fs.existsSync(personal[name])) fs.copyFileSync(personal[name], statePaths(HARDENED_HOME)[name]);
+  }
+  run("chown", "-R", "sayso:sayso", HARDENED_HOME);
+  for (const name of ["keys", "policy", "config"]) {
+    const file = statePaths(HARDENED_HOME)[name];
+    if (fs.existsSync(file)) fs.chmodSync(file, 0o644);
+  }
+  fs.mkdirSync("/etc/sayso", { recursive: true, mode: 0o755 });
+  fs.writeFileSync("/etc/sayso/hardened", "1\n", { mode: 0o644 });
+
+  fs.writeFileSync(
+    "/etc/systemd/system/sayso.service",
+    `[Unit]
+Description=sayso daemon
+After=network.target
+
+[Service]
+User=sayso
+Group=sayso
+Environment=SAYSO_HOME=${HARDENED_HOME}
+Environment=SAYSO_SOCK=${HARDENED_SOCK}
+RuntimeDirectory=sayso
+RuntimeDirectoryMode=0755
+ExecStart=${nodePath} ${lib}/src/server.mjs
+Restart=always
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=${HARDENED_HOME}
+
+[Install]
+WantedBy=multi-user.target
+`,
+  );
+  run("systemctl", "daemon-reload");
+  run("systemctl", "enable", "--now", "sayso.service");
+  run("systemctl", "restart", "sayso.service");
+
+  const managedDir = "/etc/claude-code";
+  const managedFile = path.join(managedDir, "managed-settings.json");
+  fs.mkdirSync(managedDir, { recursive: true, mode: 0o755 });
+  let managed = {};
+  if (fs.existsSync(managedFile)) managed = JSON.parse(fs.readFileSync(managedFile, "utf8"));
+  removeOurHooks(managed);
+  managed.hooks ??= {};
+  const table = JSON.parse(fs.readFileSync(path.join(lib, "hooks", "hooks.json"), "utf8")).hooks;
+  const prefix = `SAYSO_NODE=${JSON.stringify(nodePath)} SAYSO_HOME=${HARDENED_HOME} SAYSO_SOCK=${HARDENED_SOCK} `;
+  for (const [event, groups] of Object.entries(table))
+    managed.hooks[event] = [
+      ...(managed.hooks[event] ?? []),
+      ...groups.map((g) => ({ ...g, hooks: g.hooks.map((h) => ({ ...h, command: prefix + h.command.replaceAll("${CLAUDE_PLUGIN_ROOT}", lib) })) })),
+    ];
+  fs.writeFileSync(managedFile, `${JSON.stringify(managed, null, 2)}\n`, { mode: 0o644 });
+
+  const personalSettings = path.join(process.env.SUDO_USER ? `/home/${process.env.SUDO_USER}` : homedir(), ".claude", "settings.json");
+  if (fs.existsSync(personalSettings)) {
+    const settings = JSON.parse(fs.readFileSync(personalSettings, "utf8"));
+    removeOurHooks(settings);
+    fs.writeFileSync(personalSettings, `${JSON.stringify(settings, null, 2)}\n`);
+  }
+  console.log(`Hardened.
+  daemon   runs as user sayso (uid ${uid}, gid ${gid}), restarted by systemd
+  state    ${HARDENED_HOME}, owned by sayso. Sessions cannot change it.
+  hooks    ${managedFile}, which user settings cannot remove
+  app      ${lib}, owned by root
+
+From now on change agents, devices and policy with sudo, for example: sudo sayso agent add NAME`);
+}
+
 function printRequests(requests) {
   if (!requests.length) return console.log("no pending requests");
   for (const r of requests) console.log(`${r.id}  ${r.session}  ${r.risk}  approver:${r.approver}  until ${r.expires_at}\n  ${r.untrusted.action.split("\n").join("\n  ")}`);
@@ -368,6 +473,7 @@ const USAGE = `sayso: your agent can see your Claude Code sessions and answer th
   sayso notify add command -- ARGV...       or run a command with the event on stdin
   sayso notify list | clear
   sayso expose HOST                         accept requests for HOST, after you set up a tunnel
+  sudo sayso harden                         Linux: separate user, managed hooks. Sessions cannot remove it
   sayso audit [--verify] [-n N]             the decision log
   sayso doctor                              check the install
   sayso mcp                                 stdio MCP bridge (needs SAYSO_TOKEN)
@@ -377,6 +483,9 @@ const USAGE = `sayso: your agent can see your Claude Code sessions and answer th
 switch (command) {
   case "setup":
     await setup();
+    break;
+  case "harden":
+    harden();
     break;
   case "uninstall":
     refuseInsideSession("sayso uninstall");
