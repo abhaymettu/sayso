@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Records the real flow into assets/demo.gif and assets/demo.mp4: a real Claude Code session with permissions bypassed, a
 // real model as the agent, and the real approval page. Only the session's model is scripted, so the take is repeatable.
-// Run: CLAUDE_BIN=claude npx -y -p playwright@1.64.1 node tools/record-demo.mjs
+// Run: CLAUDE_BIN=claude npx -y -p playwright@1.64.1 sh -c 'NODE_PATH=$(dirname $(dirname $(which playwright)))/node_modules node tools/record-demo.mjs'
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";

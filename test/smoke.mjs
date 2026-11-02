@@ -38,7 +38,7 @@ try {
   assert.match(audit, /"decision":"approved"/);
   assert.match(audit, /"name":"test phone"/);
   say("ok  the audit log says who answered");
-  say("\nsayso works on this machine.");
+  say("\nThe gate works on this machine.");
 } catch (error) {
   failed = true;
   console.error(`\nFAILED: ${error.message}`);

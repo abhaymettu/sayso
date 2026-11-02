@@ -15,7 +15,7 @@ get around it, and [here is where it stops](#where-it-stops).
 ![A Claude Code session asks to run rm -rf data. The agent is told, says it can't approve that, and sends a link. The person holds to approve on their phone and gets a code. The agent passes the code back, and the session runs the command.](assets/demo.gif)
 
 That is one real take with a real Claude Code session and a real model as the agent. The session's model and the person's
-taps are scripted, in a phone-sized browser, so the take is repeatable. `node tools/record-demo.mjs` records it again.
+taps are scripted, in a phone-sized browser, so the take is repeatable. [`tools/record-demo.mjs`](tools/record-demo.mjs) records it again.
 
 ## Install
 
@@ -233,6 +233,7 @@ npm run test:sdk     # a session hosted through the Agent SDK
 npm run test:live    # a real model as the agent, needs a logged-in claude, under a cent a run on Haiku
 npm run bench        # latency, writes bench/results.json
 node test/probe-hooks.mjs   # the hook facts, on your Claude Code version
+npx -y -p playwright@1.64.1 node test/page/verify-page.mjs   # the approval page in three browsers
 ```
 
 The gate adds about BENCH_ADDED ms to each tool call, mostly starting Node: BENCH_WITH ms against BENCH_WITHOUT ms for a `Bash true` round trip, median of 270 calls a side in each of three runs, with the sides alternating, on a 12-core laptop at load 7. The full numbers are in `bench/results.json`.
