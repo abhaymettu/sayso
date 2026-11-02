@@ -62,6 +62,11 @@ Nothing short of a sandbox sees everything. These are not caught, in any install
 - code built from strings at run time
 - programs with their own execute options, such as `sed e` or `rsync -e`
 - ordinary writes: overwriting a file with new content looks like normal work, whether it comes from `>` or the Write tool
+- commands held in a variable, such as `npx -c "$CMD"`, since flagging those would flag every `-c "$CONFIG"`
+- an unknown program given plain trailing words, such as `sometool git reset --hard`. `rm -r`, disk wipers and about 40 known runners are read this way, but `vagrant reboot` and `git rm` have to pass
+- `git -c core.hooksPath=DIR`, encoded commands such as `git clone 'ext::sh -c rm% -rf% x'`, and archives extracted over existing files
+- other commands that print nothing and redirect into a file, such as `sleep 0 > f`
+- recursive reads from home that reach the state folder, such as `grep -r token ~`. It holds no secrets, only public keys and token hashes
 
 The classifier exists so that a tired model's `rm -rf` reaches a person. If you need to contain a hostile process, use
 Claude Code's sandbox or a VM as well.
