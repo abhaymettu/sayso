@@ -705,18 +705,27 @@ describe("what the person reads", () => {
       await hook.done;
     }));
 
-  const swallowed = ['TOKEN="$(rm -rf victim)" ./deploy.sh', "echo cookie: x; rm -rf victim", 'password "$(rm -rf victim)"'];
-  for (const command of swallowed) {
-    test(`redaction in what is shown goes to the person with a warning: ${command}`, () =>
-      withRig({ policy: { preset: "trusted-agent" } }, [FINISH], async (rig) => {
+  for (const command of ['TOKEN="$(rm -rf victim)" ./deploy.sh', 'password "$(rm -rf victim)"', "echo cookie: x; rm -rf victim"]) {
+    test(`a secret's pattern can't hide a command: ${command}`, () =>
+      withRig({}, [FINISH], async (rig) => {
         const hook = driveHook(rig, { tool_name: "Bash", tool_input: { command } });
         const request = await rig.nextRequest();
-        assert.ok(request.untrusted.warnings.some((w) => /hidden as a possible secret/.test(w)), JSON.stringify(request.untrusted));
-        assert.equal(request.approver, "human");
+        assert.match(request.untrusted.action, /rm -rf victim/);
         await rig.tool("deny", { request_id: request.id });
         await hook.done;
       }));
   }
+
+  test("redaction in what is shown goes to the person with a warning", () =>
+    withRig({ policy: { preset: "trusted-agent" } }, [FINISH], async (rig) => {
+      const hook = driveHook(rig, { tool_name: "Bash", tool_input: { command: "rm -rf victim; OPENAI_KEY=abcdefghijklmnop123456 ./deploy.sh" } });
+      const request = await rig.nextRequest();
+      assert.ok(request.untrusted.warnings.some((w) => /hidden as a possible secret/.test(w)), JSON.stringify(request.untrusted));
+      assert.equal(request.approver, "human");
+      assert.doesNotMatch(request.untrusted.action, /abcdefghijklmnop123456/);
+      await rig.tool("deny", { request_id: request.id });
+      await hook.done;
+    }));
 
   test("a permission prompt with hidden characters goes to the person", () =>
     withRig({ policy: { preset: "trusted-agent" } }, [FINISH], async (rig) => {
