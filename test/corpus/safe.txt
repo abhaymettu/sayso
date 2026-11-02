@@ -256,3 +256,215 @@ for d in dist build; do rm -rf $d; done
 for c in "npm test" "npm run lint"; do eval "$c"; done
 for p in python3 python3.12; do $p --version; done
 for x in do done; do echo $x; done | sort
+# What walking every string could wrongly flag.
+git commit -m "remove rm -rf from the script"
+git commit -m"remove rm -rf x from the script"
+git commit -am "rm -rf x"
+git commit --message="rm -rf x"
+git commit -m "fix" -m "rm -rf x"
+git commit -F - <<'EOF'\nrm -rf x\nEOF
+git log --grep="rm -rf"
+git log --grep "rm -rf x"
+git log -S"rm -rf x"
+git log -G'rm -rf x'
+git log --author="rm -rf x"
+git log --format="rm -rf x"
+git grep "rm -rf x"
+git tag -a v1 -m "rm -rf x"
+git stash push -m "rm -rf x"
+git stash save "rm -rf x"
+git -c user.name="A Person" commit -m x
+git -c core.pager=less log
+git -c core.editor="code --wait" commit
+GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519" git fetch
+GIT_PAGER=cat git log
+git config user.name "A Person"
+grep -r "rm -rf x" .
+grep -e "rm -rf x" src
+grep "; rm -rf x" a
+egrep "rm -rf x" a
+rg 'system\(' src
+rg "rm -rf x" src
+rg -e "rm -rf x" src
+ag "rm -rf x" src
+echo "do not run rm -rf"
+echo "do not run rm -rf x"
+echo "rm -rf x"
+echo 'x; rm -rf y'
+printf "rm -rf x\\n"
+cat <<EOF\nrm -rf x\nEOF
+tee a.sh <<'EOF'\nrm -rf x\nEOF
+cat > a.sh <<'EOF'\nrm -rf x\nEOF
+gh pr create --body "..."
+gh pr create --title "rm -rf x" --body "rm -rf x"
+gh pr create --body="rm -rf x"
+gh pr create -t "rm -rf x" -b "rm -rf x"
+gh pr create --body-file - <<'EOF'\nrm -rf x\nEOF
+gh issue comment 1 --body "rm -rf x"
+gh pr comment 1 -b "rm -rf x"
+gh api repos/o/r -f body="rm -rf x"
+gh pr list --search "rm -rf x"
+gh api repos/o/r --jq '.a | "rm -rf x"'
+glab mr create --description "rm -rf x"
+python3 -c "print(1)"
+python3 -c 'print(1)'
+python3 -c'print(1)'
+python3 -Wignore -c "print(1)"
+python3 -mpytest -q
+node -e "console.log(1)"
+node -p "1+1"
+perl -e 'print 1'
+perl -le'print 1'
+perl -i.bak -pe 's/a/b/' f
+perl -pi -e 's/a/b/' f
+ruby -e 'puts 1'
+ruby -ne 'puts $_' f
+php -r 'echo 1;'
+php -dmemory_limit=1 x.php
+lua -e 'print(1)'
+python3 script.py --name "A Person"
+python3 script.py "hello world"
+node script.js "hello world"
+awk '{print $1}' f
+awk '/foo|bar/' f
+awk '{print $1 "|" $2}' f
+awk 'BEGIN{print "a b"}'
+awk '{print | "sort"}' f
+awk '$1 == "x" || $2 == "y"' f
+sed -n 1,5p f
+sed 's/rm -rf/del/' f
+sed -E 's/e/f/g' f
+sed -e 's/a/b/' -e 's/c/d/' f
+sed '/e x/d' f
+sed 's/a/e/' f
+export PAGER=less
+export EDITOR=vim
+export EDITOR="code --wait"
+export FOO="rm -rf x"
+FOO="rm -rf x"
+PAGER=cat git log
+EDITOR="code --wait" git commit
+MSG="hello there" npm test
+env FOO="a b" npm test
+npm run test -- --watch
+npm run test -- "hello world"
+npx jest -t "does a thing"
+npx -p foo bar
+npm test -- -t "removes a file from the list"
+ssh -o StrictHostKeyChecking=no host uptime
+ssh -o ProxyCommand="ssh -W %h:%p bastion" host uptime
+ssh -o "ProxyCommand ssh -W %h:%p bastion" host uptime
+scp -o ProxyCommand="ssh -W %h:%p bastion" a host:b
+rsync -e "ssh -i key" a b
+rsync -a a/ b/
+rsync -a --delete dist/ /tmp/out/
+rsync -an --delete a/ b/
+rsync -a --delete a/ host:/var/www/
+tmux new -d -s work "npm test"
+tmux ls
+screen -ls
+at -l
+docker run --rm x npm test
+docker exec c ls
+kubectl exec p -- ls -la
+curl -d "hello there" https://example.com
+curl -H "Accept: text/plain" https://example.com
+curl -d '{"text":"please read this"}' https://example.com
+curl -G --data-urlencode "q=rm -rf" https://example.com
+make test ARGS="a b"
+pytest -k "a and b"
+cargo test -- --nocapture
+go test -run "TestA|TestB" ./...
+docker compose run web npm test
+docker rm -f x
+vagrant reboot
+vagrant halt
+make halt
+npm run reboot
+brew rm x
+pnpm rm x
+git rm x
+git rm -r src
+sort -k1 f
+sort f | uniq -c
+tr ' ' '\\n' < f
+xargs -I{} echo "rm -rf {}"
+find . -name "a b"
+find . -name "rm -rf x"
+jq '.a | select(.b == "rm -rf x")' f
+# An ordinary write with content is normal work.
+echo hi > note.txt
+echo "hi" > note.txt
+echo $X > note.txt
+echo "$X" > note.txt
+printf "hi\\n" > note.txt
+printf '%s' "$X" > note.txt
+npm test > out.log
+npm test > out.log 2>&1
+ls > out.txt
+cat a > b
+cat a b > c
+cat > f <<EOF\nhello\nEOF
+cp a b
+cp /dev/null /tmp/x
+tee a < b
+echo "" >> note.txt
+: >> note.txt
+{ echo hi; echo there; } > note.txt
+(ls; pwd) > note.txt
+for f in a b; do echo $f; done > note.txt
+if true; then echo hi; fi > note.txt
+while read l; do echo $l; done < a > b
+case $x in a) echo a;; esac > note.txt
+[[ -f a ]] > note.txt
+(( i++ )) > note.txt
+echo "> quoted text"
+python3 -c "print('> quoted text')"
+tool "> quoted text"
+: > /tmp/x
+: > /dev/null
+> /dev/null
+> /tmp/x
+: > dist/out.txt
+: > "$LOG"
+true > /dev/null
+echo "" > /tmp/x
+cat /dev/null > /tmp/x
+echo > /dev/null
+# Disk tools have safe verbs too.
+zpool list
+zpool status tank
+zfs list
+nvme list
+sfdisk -l /dev/sda
+sfdisk --dump /dev/sda
+sgdisk -p /dev/sda
+sgdisk --print /dev/sda
+cryptsetup status x
+cryptsetup luksDump /dev/sda
+diskutil apfs list
+diskutil info disk1
+gdisk -l /dev/sda
+lvs
+# Paths that only look close to the guard's.
+cat ~/.sayso-backup/notes
+cat ~/.s/notes
+ls ~/*
+ls ~/*/keys.json
+cat ./*.md
+ls *
+ls /tmp/*.txt
+cat ~/.claude/projects/x/notes.json
+cat ~/.claude-work/a/settings.json
+echo '{}' > ./my-settings.json
+echo '{}' > config/settings.json
+echo '{}' > .vscode/settings.json
+node ./src/server.js
+node bin/other.mjs
+pkill -f server.js
+pkill -f webpack
+pkill node
+killall node
+curl http://127.0.0.1:8080/health
+curl http://localhost:$PORT/health
+curl http://example.com:7428/x

@@ -27,11 +27,52 @@ describe("redact", () => {
     ["private key", "-----BEGIN RSA PRIVATE KEY-----\nabc\ndef\n-----END RSA PRIVATE KEY-----", "[redacted private key]"],
     ["long hex", "a".repeat(64), "[redacted hex]"],
     ["sayso's own token", "sayso_agent_abcdefg", "[redacted token]"],
+    ["mysql glued password", "mysql -uroot -pHunterTwo99 db", "mysql -uroot -p[redacted] db"],
+    ["mysql glued lowercase password", "mysql -phunter db", "mysql -p[redacted] db"],
+    ["glued password on an unknown program", "tool -pHunterTwo99 x", "tool -p[redacted] x"],
+    ["PASS assignment", "PASS=hunter2 x", "PASS=[redacted] x"],
+    ["DB_PASS assignment", "DB_PASS=hunter2 x", "DB_PASS=[redacted] x"],
+    ["MYSQL_PWD assignment", "MYSQL_PWD=hunter2 x", "MYSQL_PWD=[redacted] x"],
+    ["creds assignment", "creds=hunter2 x", "creds=[redacted] x"],
+    ["password then a value", "password hunter2", "password [redacted]"],
+    ["curl basic auth", "curl -u admin:hunter2 https://x.example", "curl -u admin:[redacted] https://x.example"],
+    ["curl basic auth long flag", "curl --user admin:hunter2 https://x.example", "curl --user admin:[redacted] https://x.example"],
+    ["aws configure", "aws configure set aws_secret_access_key wJalrXUtnFEMI", "aws configure set aws_secret_access_key [redacted]"],
+    ["openssl pass", "openssl enc -pass pass:hunter2", "openssl enc -pass pass:[redacted]"],
+    ["redis password", "redis-cli -h h -a hunter2 ping", "redis-cli -h h -a [redacted] ping"],
+    ["zip password", "zip -P hunter2 a.zip b", "zip -P [redacted] a.zip b"],
+    ["stripe live", "sk_live_51Habcdefgh", "[redacted key]"],
+    ["stripe test", "rk_test_51Habcdefgh", "[redacted key]"],
+    ["hugging face", "hf_abcdefghijklmnopqrstuv", "[redacted token]"],
+    ["sendgrid", "SG.abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuv", "[redacted key]"],
+    ["groq", "gsk_abcdefghijklmnopqrstuv", "[redacted token]"],
+    ["xai", "xai-abcdefghijklmnopqrstuv", "[redacted key]"],
+    ["google oauth", "ya29.abcdefghijklmnopqrstuv", "[redacted token]"],
+    ["resend", "re_abcdefghijklmnopqrstuv", "[redacted key]"],
+    ["digitalocean", "dop_v1_abcdefghijklmnopqrstuv", "[redacted token]"],
   ];
   for (const [name, input, expected] of cases) test(name, () => assert.equal(redact(input), expected));
 
   test("ordinary commands are left readable", () => {
-    for (const text of ["rm -rf build", "git push origin main", "ls -la /tmp", "npm run test -- --watch", "curl https://example.com/a/b.json"]) assert.equal(redact(text), text);
+    for (const text of [
+      "rm -rf build",
+      "git push origin main",
+      "ls -la /tmp",
+      "npm run test -- --watch",
+      "curl https://example.com/a/b.json",
+      "mkdir -p some/long/path",
+      "docker run -p 8080:80 x",
+      "docker run -u 1000:1000 x",
+      "ssh -p 2222 host",
+      "gcc -pthread a.c",
+      "find . -print0",
+      "PWD=/tmp/here tool",
+      "git log --author=Someone",
+      "passwd alice",
+      "bypass=1 compass=2 tool",
+      "the password is wrong",
+      "mysql -p db",
+    ]) assert.equal(redact(text), text);
   });
 });
 
@@ -46,6 +87,30 @@ describe("faithful display", () => {
   test("runs of spaces and blank lines cannot push text out of view", () => {
     assert.equal(faithful(`a${" ".repeat(50)}b`).text, "a⟦50 spaces⟧b");
     assert.match(faithful(`a${"\n".repeat(30)}b`).text, /⟦30 blank lines⟧/);
+    assert.match(faithful(`a${"  \n".repeat(30)}b`).text, /⟦30 blank lines⟧/);
+  });
+  for (const [name, blank] of [["nbsp", " "], ["em space", " "], ["braille blank", "⠀"], ["hangul filler", "ㅤ"], ["ideographic space", "　"], ["tab", "\t"]]) {
+    test(`a long run of ${name} collapses like spaces and warns`, () => {
+      const { text, warnings } = faithful(`echo hello${blank.repeat(400)}; rm -rf victim`);
+      assert.equal(text, "echo hello⟦400 blank characters⟧; rm -rf victim");
+      assert.deepEqual(warnings, ["long run of spaces"]);
+    });
+  }
+  test("a mixed run of blanks collapses as one", () => {
+    assert.equal(faithful(`a${"  ".repeat(20)}b`).text, "a⟦40 blank characters⟧b");
+  });
+  test("a single unusual blank shows as what it is, so rm\\u00a0-rf cannot read as rm -rf", () => {
+    assert.deepEqual(faithful("rm -rf x"), { text: "rm⟦U+00A0⟧-rf x", warnings: ["unusual blank characters"] });
+  });
+  for (const [name, text] of [["armenian", "հ"], ["math bold", "𝐛"], ["long s", "ſ"], ["fullwidth", "ｒ"], ["greek", "ο"], ["cherokee", "Ꭺ"], ["fraction slash", "⁄"]]) {
+    test(`look-alike letters include ${name}, shown as themselves`, () => {
+      assert.deepEqual(faithful(text), { text, warnings: ["look-alike letters"] });
+    });
+  }
+  test("line separators and more invisible characters are marked", () => {
+    assert.equal(faithful("a b").text, "a⟦U+2028⟧b");
+    assert.equal(faithful("a͏b").text, "a⟦U+034F⟧b");
+    assert.equal(faithful("a️b").text, "a⟦U+FE0F⟧b");
   });
   test("over the limit it keeps both ends and says so", () => {
     const shown = forDisplay(`start ${"x y ".repeat(2000)} end`, 200);

@@ -140,7 +140,7 @@ function takeMail(sessionId) {
 }
 
 function verdictFor(input) {
-  const ctx = { home: homedir(), cwd: input.cwd ?? process.cwd(), stateDir: paths.dir };
+  const ctx = { home: homedir(), cwd: input.cwd ?? process.cwd(), stateDir: paths.dir, configDir: process.env.CLAUDE_CONFIG_DIR };
   let verdict;
   try {
     verdict = classifyToolCall(input.tool_name, input.tool_input ?? {}, ctx);
