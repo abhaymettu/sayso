@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { classifyShell, classifyToolCall, RISK_ORDER } from '../src/classify.mjs';
+import { forDisplay, redact } from '../src/redact.mjs';
 
 const CTX = { home: '/Users/dev', cwd: '/Users/dev/project', stateDir: '/Users/dev/.sayso' };
 
@@ -108,13 +109,234 @@ test('more strings than the walk will read fails closed instead of going quiet',
   assert.equal(classifyShell(`tool ${words}`, CTX)?.risk, 'opaque');
 });
 
-test('an adversarial command stays fast', () => {
-  const nested = Array.from({ length: 2000 }, () => '"x=y z"').join(' ');
-  for (const command of [`tool ${nested}`, `${'a -- '.repeat(3000)}x`, `sh -c "${'sh -c '.repeat(1500)}x"`]) {
-    const start = performance.now();
-    classifyShell(command, CTX);
-    assert.ok(performance.now() - start < 1500, `took ${performance.now() - start} ms`);
-  }
+const SIZE = 19990;
+const fill = (head, unit, tail = '') => head + unit.repeat(Math.floor((SIZE - head.length - tail.length) / unit.length)) + tail;
+const loop64 = (body) => `for i in ${Array.from({ length: 64 }, (_, k) => k).join(' ')}; do ${body}; done`;
+
+const SLOW_COMMANDS = {
+  'one word of [': fill('echo ', '['),
+  'a tool and one word of [': fill('tool ', '['),
+  'brace then dots': fill('echo {', '.'),
+  'nested braces': fill('echo ', '{a,'),
+  'many brace groups': fill('echo ', '{a,b}'),
+  'escaped quotes in a string': `tool '${'\\"'.repeat(9980)}'`,
+  'comma then spaces in a string': `tool '"a",${' '.repeat(19970)}x'`,
+  'awk prints': `awk '${'print '.repeat(3320)}'`,
+  'perl opens': `perl -e '${'open '.repeat(3980)}'`,
+  'open parens': fill('', '('),
+  'arithmetic nest': `${'$(('.repeat(3300)}1${'))'.repeat(3300)}`,
+  'substitution nest': `${'$('.repeat(6600)}x${')'.repeat(6600)}`,
+  'many quoted args': fill('tool ', "'a b' "),
+  'dash dash tails': fill('tool ', 'a -- '),
+  'runner words': fill('tmux ', 'cd '),
+  'loop of brackets': loop64(`echo ${'['.repeat(19000)}`),
+  'loop of escaped quotes': loop64(`tool '${'\\"'.repeat(9000)}'`),
+  'loop in a string': `tool '${loop64(`echo ${'['.repeat(18000)}`)}'`,
+  'nested strings': fill('tool ', "'a '\\''b '"),
+  'a glob of stars': `cat /Users/dev/.${'*'.repeat(19000)}q`,
+  'a glob of star dots': fill('cat /Users/dev/', '*.'),
+  'question marks in a delete': fill('rm -rf ', '?'),
+  'bracket sets': fill('cat /Users/dev/', '[a'),
+  'pkill with a nested pattern': `pkill -f '${'(.*)'.repeat(4900)}x'`,
+  'pkill with stars': fill("pkill -f 'a", '.*', "b'"),
+  'quote operators': `perl -e '${'q('.repeat(9900)}'`,
+  'function definitions': fill('', 'f(){ :; };'),
+  'heredocs': fill('', 'cat <<A\n'),
+  'empty string pieces': fill('rm ', "''"),
+  'one long path': `cat /${'a/'.repeat(9980)}`,
+  'dot dot path': fill('cat ', '../'),
+  'settings segments': fill('cat ', '.claude/'),
+  'assignments': fill('', 'a=$b '),
+  'cd chain': fill('', 'cd a;'),
+  'an open list in inline code': `python3 -c '${'["a", '.repeat(3300)}'`,
+};
+
+/** A fresh process each time, because that is what the hook is. Regexes start in the interpreter there, far slower than a warm loop shows. */
+function coldRun(modulePath, exportName, input) {
+  const moduleUrl = new URL(modulePath, import.meta.url).href;
+  const script = `const input = require('node:fs').readFileSync(0, 'utf8');
+    import(${JSON.stringify(moduleUrl)}).then((m) => {
+      const start = performance.now();
+      const result = m.${exportName}(input, ${JSON.stringify(CTX)});
+      console.log(JSON.stringify({ ms: performance.now() - start, result }));
+    });`;
+  const child = spawnSync(process.execPath, ['-e', script], { input, encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  return JSON.parse(child.stdout);
+}
+
+const bestOfTwo = (run) => {
+  const first = run();
+  const second = run();
+  return first.ms <= second.ms ? first : second;
+};
+
+for (const [name, command] of Object.entries(SLOW_COMMANDS)) {
+  test(`classifies in under 200 ms when cold: ${name}`, () => {
+    assert.ok(command.length <= 20000, `input is ${command.length}`);
+    const { ms } = bestOfTwo(() => coldRun('../src/classify.mjs', 'classifyShell', command));
+    assert.ok(ms < 200, `took ${ms.toFixed(0)} ms`);
+  });
+}
+
+test('running out of budget keeps what was seen and never goes quiet', () => {
+  const strings = "'a b' ".repeat(2100);
+  const after = classifyShell(`tool ${strings}; rm -rf victim`, CTX);
+  assert.equal(after.risk, 'destructive');
+  assert.ok(after.why.includes('too many nested strings to read'), after.why.join());
+  assert.equal(classifyShell(`tool ${strings} 'rm -rf victim'`, CTX)?.risk, 'opaque');
+  assert.equal(classifyShell(`tool ${'a -- '.repeat(3900)}`, CTX)?.risk, 'opaque');
+  assert.equal(classifyShell(`tmux ${'cd '.repeat(70)}git reset --hard`, CTX)?.risk, 'opaque');
+});
+
+test('running out of time reads as opaque and keeps what was seen', () => {
+  assert.equal(classifyShell('('.repeat(19990), CTX)?.risk, 'opaque');
+  const verdict = classifyShell(`rm -rf /; ${'('.repeat(19900)}`, CTX);
+  assert.ok(RISK_ORDER.indexOf(verdict.risk) >= RISK_ORDER.indexOf('opaque'), verdict.risk);
+});
+
+test('loop iterations and string depth draw on one budget', () => {
+  const body = "tool 'a b' 'c d' 'e f' 'g h'";
+  const verdict = classifyShell(`tool '${loop64(loop64(body)).replaceAll("'", '"')}'`, CTX);
+  assert.ok(verdict === null || verdict.risk === 'opaque', verdict?.risk);
+  assert.equal(classifyShell(`tool "${loop64(loop64("tool 'rm -rf victim'"))}"`, CTX)?.risk, 'destructive');
+});
+
+const SLOW_TEXT = {
+  'token dashes': 'token-'.repeat(200000),
+  'mysql words': 'mysql '.repeat(200000),
+  'dots': 'a.'.repeat(500000),
+  'zip words': 'zip '.repeat(250000),
+  'user flags': '-u a '.repeat(200000),
+  'password names': 'password='.repeat(100000),
+  'cookie pairs': `Cookie: ${'a=1; '.repeat(200000)}`,
+  'an open key block': `-----BEGIN PRIVATE KEY-----${'\nabcd'.repeat(200000)}`,
+  'many key blocks': '-----BEGIN PRIVATE KEY-----\n'.repeat(40000),
+  'percent escapes': '%41'.repeat(300000),
+  'percent words': '%41 '.repeat(250000),
+  'split quotes': `"a"'b'`.repeat(160000),
+  'split quoted words': `"a"'b' `.repeat(140000),
+  'invisible marks': '\u200b'.repeat(1000000),
+  'long blob': 'a'.repeat(1000000),
+  'slashes': 'a/'.repeat(500000),
+  'hex': 'f'.repeat(1000000),
+  'url colons': 'a://b:'.repeat(160000),
+  'at signs': `https://${'a:b@'.repeat(250000)}`,
+  'blank lines': '\n'.repeat(1000000),
+  'comment lines': '# x\n'.repeat(250000),
+  'nested pairs': `a='b="c=`.repeat(100000),
+};
+
+for (const [name, text] of Object.entries(SLOW_TEXT)) {
+  test(`redacts in under 100 ms when cold: ${name}`, () => {
+    const { ms } = bestOfTwo(() => coldRun('../src/redact.mjs', 'redact', text));
+    assert.ok(ms < 100, `took ${ms.toFixed(0)} ms`);
+  });
+}
+
+const key = (prefix, length = 32) => prefix + 'a1B2'.repeat(Math.ceil(length / 4)).slice(0, length);
+
+const SECRET_SHAPES = [
+  `OPENAI_KEY=${key('')}`,
+  `SIGNING_KEY=${key('')}`,
+  `DB_PW=${key('')}`,
+  `SMTP_PASS=${key('')}`,
+  `AWS_SESSION_TOK="${key('')}"`,
+  key('dckr_pat_'),
+  key('secret_'),
+  key('hvs.'),
+  key('glpat-'),
+  key('gldt-'),
+  key('sbp_'),
+  key('pypi-'),
+  key('sntrys_'),
+  key('tskey-'),
+  key('ghp_', 36),
+  key('xoxb-'),
+  key('sk-ant-'),
+  key('AIza', 35),
+  `123456789:${key('', 35)}`,
+  `M${key('', 23)}.GabcDE.${key('', 27)}`,
+  `https://hooks.slack.com/services/${key('T/B/')}`,
+  `https://discord.com/api/webhooks/1/${key('')}`,
+  `https://x.blob.core.windows.net/c/b?sv=2022&sig=${key('')}`,
+  `AccountKey=${key('')}`,
+  `-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n${key('')}\n-----END PGP PRIVATE KEY BLOCK-----`,
+  `-----BEGIN OPENSSH PRIVATE KEY-----\n${key('')}\n${key('')}\n-----END OPENSSH PRIVATE KEY-----`,
+  `postgres://app:${key('')}@db/x`,
+  `https://:${key('')}@example.com/x`,
+  `curl https://${key('')}:${key('')}@example.com`,
+  `sqlcmd -S db -U sa -P ${key('')}`,
+  `ldapsearch -D cn=admin -w ${key('')}`,
+  `openssl enc -aes-256-cbc -k ${key('')} -in x`,
+  `htpasswd -b .htpasswd admin ${key('')}`,
+  `smbclient //h/s -U admin%${key('')}`,
+  `ssh-keygen -p -P ${key('')} -f k`,
+  `curl -b ${key('')} https://x.com`,
+  `curl --cookie ${key('')} https://x.com`,
+  `echo ${key('')} | docker login -u me --password-stdin`,
+  `git -c http.extraHeader='PRIVATE-TOKEN: ${key('')}' pull`,
+  `password%3D${key('')}`,
+  `sk%2Dant%2D${key('')}`,
+  `sk-ant%252D${key('')}`,
+  `K="sk-ant-"'${key('')}'`,
+  `curl "https://x.com/login?password=${key('')}"`,
+  `curl "https://x.com/login?pass%77ord=${key('')}"`,
+  `{"pass\\u0077ord":"${key('')}"}`,
+  `sk-\u200bant-${key('')}`,
+  `{\\"password\\":\\"${key('')}\\"}`,
+];
+
+for (const shape of SECRET_SHAPES) {
+  test(`hides the secret in: ${shape.slice(0, 48)}`, () => {
+    assert.ok(!redact(shape).includes(key('', 16)), redact(shape));
+  });
+}
+
+const STAYS_VISIBLE = [
+  ['TOKEN="$(rm -rf ~/Documents)" ./deploy.sh', 'rm -rf ~/Documents'],
+  ['password "$(rm -rf ~/Documents)"', 'rm -rf ~/Documents'],
+  ['TOKEN=`rm -rf ~/Documents`', 'rm -rf ~/Documents'],
+  ['echo cookie: x; rm -rf ~/Documents', 'rm -rf ~/Documents'],
+  ['Cookie: a=1; rm -rf ~/Documents', 'rm -rf ~/Documents'],
+  [`echo 'TOKEN="'; rm -rf ~/Documents; echo '"'`, 'rm -rf ~/Documents'],
+  ['PASSWORD="a"; rm -rf ~/Documents', 'rm -rf ~/Documents'],
+  ['curl -u a:b"; rm -rf ~/Documents; echo "c" x.com', 'rm -rf ~/Documents'],
+  ['echo -----BEGIN PRIVATE KEY-----; rm -rf ~/Documents', 'rm -rf ~/Documents'],
+  ['echo -----BEGIN PRIVATE KEY-----\nrm -rf ~/Documents', 'rm -rf ~/Documents'],
+  ['rm -rf ./cache/../../../Users/dev/Documents/thesis/papers/final/chapters/one/two/three/four', '../../../Users/dev/Documents/thesis'],
+  ['MONKEY=banana ./run', 'banana'],
+  [`${'a%41 '.repeat(80)} rm -rf %2e%2e`, 'rm -rf %2e%2e'],
+  ['-print0', '-print0'],
+];
+
+for (const [command, visible] of STAYS_VISIBLE) {
+  test(`a person still reads what runs in: ${command.slice(0, 48)}`, () => {
+    assert.ok(forDisplay(command).text.includes(visible), forDisplay(command).text);
+  });
+}
+
+test('the display says when a pattern changed the text', () => {
+  assert.deepEqual(forDisplay('echo hi'), { text: 'echo hi', warnings: [], truncated: false, redacted: false });
+  const display = forDisplay('TOKEN=abc ./run');
+  assert.equal(display.text, 'TOKEN=[redacted] ./run');
+  assert.equal(display.redacted, true);
+});
+
+test('text past the scanned size is cut, and the display says so', () => {
+  const long = `${'x'.repeat(100000)} TOKEN=abc`;
+  assert.ok(!redact(long).includes('abc'));
+  assert.ok(redact(long).length < 20000);
+  const display = forDisplay(`echo ${'word '.repeat(10000)}`);
+  assert.equal(display.truncated, true);
+  assert.ok(display.warnings.includes('too long to show in full'), display.warnings.join());
+});
+
+test('lines with no command in them raise a warning', () => {
+  assert.ok(forDisplay(`${'# note\n'.repeat(900)}rm -rf victim`).warnings.includes('long run of lines with no command in them'));
+  assert.ok(forDisplay(`${':\ntrue\n'.repeat(10)}rm -rf victim`).warnings.includes('long run of lines with no command in them'));
+  assert.ok(forDisplay(`${'ls\n'.repeat(100)}rm -rf victim`).warnings.includes('many lines to read'));
+  assert.deepEqual(forDisplay('# one comment\nls\n\npwd').warnings, []);
 });
 
 const toolCases = [
@@ -152,7 +374,39 @@ const toolCases = [
   ['Read', { file_path: '/Users/dev/.sayso/token' }, 'self'],
   ['Read', { file_path: 'README.md' }, null],
   ['mcp__sayso__ask', {}, null],
-  ['mcp__sayso__delete_everything', {}, null],
+  ['mcp__sayso__delete_everything', {}, 'outward'],
+  ['mcp__shell__run_command', { command: 'rm -rf victim' }, 'destructive'],
+  ['mcp__fs__write_file', { path: '/Users/dev/.claude/settings.json', content: '{}' }, 'self'],
+  ['mcp__fs__get_file', { file_path: '/Users/dev/.sayso/keys.json' }, 'self'],
+  ['mcp__fs__get_file', { path: '/Users/dev/.ssh/id_rsa' }, 'credentials'],
+  ['mcp__db__q', { sql: 'DROP TABLE users' }, 'destructive'],
+  ['mcp__db__q', { query: 'DROP TABLE users' }, 'destructive'],
+  ['mcp__x__do', { steps: [{ deep: { cmd: 'rm -rf /' } }] }, 'catastrophic'],
+  ['mcp__x__do', { script: 'rm -rf victim' }, 'destructive'],
+  ['mcp__x__exec', {}, 'opaque'],
+  ['mcp__x__shell', {}, 'opaque'],
+  ['mcp__x__run', {}, 'opaque'],
+  ['mcp__x__runCode', {}, 'opaque'],
+  ['mcp__x__write_doc', {}, 'opaque'],
+  ['mcp__x__send_command', {}, 'outward'],
+  ['mcp__x__prune_cache', {}, null],
+  ['mcp__x__truncate_text', {}, null],
+  ['mcp__x__get_command', {}, null],
+  ['mcp__x__list_shells', {}, null],
+  ['mcp__db__search', { query: 'how to drop table' }, null],
+  ['mcp__x__do', { command: 'ls' }, null],
+  ['ExitWorktree', { action: 'remove', discard_changes: true }, 'destructive'],
+  ['ExitWorktree', { action: 'keep' }, null],
+  ['ExitWorktree', { action: 'remove', discard_changes: false }, null],
+  ['Read', { file_path: '/Users/dev/.git-credentials' }, 'credentials'],
+  ['Read', { file_path: '/srv/app/.env' }, 'credentials'],
+  ['Read', { file_path: '.env.production' }, 'credentials'],
+  ['Read', { file_path: '.env.example' }, null],
+  ['Write', { file_path: '/Users/dev/.gitconfig', content: '[core]\n fsmonitor=/tmp/e' }, 'destructive'],
+  ['Write', { file_path: '/Users/dev/.zlogin', content: 'x' }, 'destructive'],
+  ['Write', { file_path: '/Users/dev/project/.git/hooks/pre-commit', content: 'x' }, 'destructive'],
+  ['Write', { file_path: '.git/hooks/pre-commit', content: 'x' }, 'destructive'],
+  ['Write', { file_path: '/Users/dev/.config/fish/config.fish', content: 'x' }, 'destructive'],
   ['mcp__github__delete_repo', {}, 'outward'],
   ['mcp__gmail__send_message', {}, 'outward'],
   ['mcp__gmail__sendMessage', {}, 'outward'],

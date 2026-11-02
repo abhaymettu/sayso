@@ -3,10 +3,11 @@
 // only through --show-flagged with an explicit --out path.
 import { createReadStream, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
-import { classifyShell, RISK_ORDER } from '../src/classify.mjs';
+import { pathToFileURL } from 'node:url';
+import { classifyShell, classifyToolCall, RISK_ORDER } from '../src/classify.mjs';
 
 const { values: options } = parseArgs({
   options: {
@@ -14,11 +15,12 @@ const { values: options } = parseArgs({
     'max-files': { type: 'string' },
     'show-flagged': { type: 'string' },
     out: { type: 'string' },
+    against: { type: 'string' },
   },
 });
 
 if (!options.dir) {
-  console.error('usage: measure-classifier --dir <path> [--max-files N] [--show-flagged N --out path]');
+  console.error('usage: measure-classifier --dir <path> [--max-files N] [--show-flagged N --out path] [--against other/classify.mjs]');
   process.exit(2);
 }
 const sampleSize = Number(options['show-flagged'] ?? 0);
@@ -26,6 +28,9 @@ if (sampleSize > 0 && !options.out) {
   console.error('--show-flagged needs --out, flagged commands never print to stdout');
   process.exit(2);
 }
+
+// With --against, the sample and new_* counts hold only what the other classifier let through.
+const against = options.against ? await import(pathToFileURL(resolve(options.against)).href) : null;
 
 function transcriptFiles(dir) {
   const found = [];
@@ -70,6 +75,20 @@ const sample = [];
 let flaggedTotal = 0;
 let seenFlagged = 0;
 let unreadableLines = 0;
+let newlyFlagged = 0;
+const newReasonCounts = new Map();
+const otherTools = { total: 0, flagged: 0, per_risk: Object.fromEntries(RISK_ORDER.map((risk) => [risk, 0])), new_flagged: 0 };
+
+const bump = (counts, why) => counts.set(why, (counts.get(why) ?? 0) + 1);
+
+function keepInSample(item) {
+  seenFlagged++;
+  if (sample.length < sampleSize) sample.push(item);
+  else if (sampleSize > 0) {
+    const slot = Math.floor(Math.random() * seenFlagged);
+    if (slot < sampleSize) sample[slot] = item;
+  }
+}
 
 function record(command, cwd) {
   uniqueCommands.add(command);
@@ -81,19 +100,33 @@ function record(command, cwd) {
   flaggedTotal++;
   flaggedUnique.add(command);
   flaggedPerRisk[verdict.risk]++;
-  for (const why of verdict.why) reasonCounts.set(why, (reasonCounts.get(why) ?? 0) + 1);
-  seenFlagged++;
-  if (sample.length < sampleSize) sample.push({ risk: verdict.risk, why: verdict.why, command });
-  else if (sampleSize > 0) {
-    const slot = Math.floor(Math.random() * seenFlagged);
-    if (slot < sampleSize) sample[slot] = { risk: verdict.risk, why: verdict.why, command };
+  for (const why of verdict.why) bump(reasonCounts, why);
+  const isNew = against !== null && !against.classifyShell(command, ctx);
+  if (isNew) {
+    newlyFlagged++;
+    for (const why of verdict.why) bump(newReasonCounts, why);
   }
+  if (against === null || isNew) keepInSample({ risk: verdict.risk, why: verdict.why, command });
+}
+
+function recordOtherTool(name, input, cwd) {
+  otherTools.total++;
+  const ctx = { home, cwd: cwd ?? process.cwd(), stateDir };
+  const verdict = classifyToolCall(name, input, ctx);
+  if (!verdict) return;
+  otherTools.flagged++;
+  otherTools.per_risk[verdict.risk]++;
+  if (against === null) return;
+  if (against.classifyToolCall(name, input, ctx)) return;
+  otherTools.new_flagged++;
+  for (const why of verdict.why) bump(newReasonCounts, why);
+  keepInSample({ risk: verdict.risk, why: verdict.why, tool: name, input });
 }
 
 for (const file of files) {
   const lines = createInterface({ input: createReadStream(file), crlfDelay: Number.POSITIVE_INFINITY });
   for await (const line of lines) {
-    if (!line.includes('"tool_use"') || !line.includes('"Bash"')) continue;
+    if (!line.includes('"tool_use"')) continue;
     let entry;
     try {
       entry = JSON.parse(line);
@@ -103,10 +136,11 @@ for (const file of files) {
     }
     if (entry.type !== 'assistant' || !Array.isArray(entry.message?.content)) continue;
     for (const block of entry.message.content) {
-      if (block.type !== 'tool_use' || block.name !== 'Bash' || typeof block.input?.command !== 'string') continue;
+      if (block.type !== 'tool_use') continue;
       if (block.id && seenToolUses.has(block.id)) continue;
       if (block.id) seenToolUses.add(block.id);
-      record(block.input.command, entry.cwd);
+      if (block.name !== 'Bash') recordOtherTool(block.name, block.input ?? {}, entry.cwd);
+      else if (typeof block.input?.command === 'string') record(block.input.command, entry.cwd);
     }
   }
 }
@@ -129,6 +163,11 @@ console.log(
       p50_micros: round(percentile(timingsMicros, 0.5), 1),
       p99_micros: round(percentile(timingsMicros, 0.99), 1),
       top_reasons: [...reasonCounts].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([why, count]) => ({ why, count })),
+      other_tools: otherTools,
+      ...(against && {
+        new_flagged: newlyFlagged,
+        new_reasons: [...newReasonCounts].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([why, count]) => ({ why, count })),
+      }),
     },
     null,
     2,

