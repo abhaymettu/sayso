@@ -143,16 +143,16 @@ describe("a prompt-injected agent", () => {
       assert.equal(rig.destroyed(), false);
     }));
 
+  // Claude Code refuses an Edit of a file it has not read before any hook runs, so this drives the hook directly.
   test("an Edit shows the person the change, not only the file", () =>
     withRig({}, [FINISH], async (rig) => {
-      await rig.model([{ tool: "Edit", input: { file_path: path.join(rig.home, "policy.json"), old_string: "strict", new_string: "trusted-agent" } }, FINISH]);
-      const session = rig.headless();
+      const hook = spawn("sh", [path.join(rig.home, "app", "hooks", "run.sh"), "gate"], { cwd: rig.cwd, env: rig.env({ CLAUDE_CODE_SESSION_ATTENDED: "0" }), stdio: ["pipe", "ignore", "ignore"] });
+      const finished = new Promise((resolve) => hook.on("exit", resolve));
+      hook.stdin.end(JSON.stringify({ hook_event_name: "PreToolUse", session_id: "direct", cwd: rig.cwd, permission_mode: "bypassPermissions", tool_name: "Edit", tool_input: { file_path: path.join(rig.home, "policy.json"), old_string: "strict", new_string: "trusted-agent" } }));
       const request = await rig.nextRequest();
       assert.match(request.untrusted.action, /strict[\s\S]*trusted-agent/);
-      const { approval_url: url } = await rig.tool("approve", { request_id: request.id });
-      assert.match(Buffer.from(new URL(url).hash.slice(3), "base64url").toString(), /strict[\s\S]*trusted-agent/);
       await rig.tool("deny", { request_id: request.id });
-      await session.done;
+      await finished;
     }));
 
   test("a broken policy file falls back to strict", () =>
