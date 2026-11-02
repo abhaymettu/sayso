@@ -191,6 +191,9 @@ export class Rig {
     await this.askDaemon({ op: "shutdown" }).catch(() => {});
     openRigs.delete(this);
     await sleep(40);
-    fs.rmSync(this.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    // Claude Code can still be writing as it dies. Leftovers in a temp folder should not fail a test.
+    try {
+      fs.rmSync(this.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {}
   }
 }
