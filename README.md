@@ -73,8 +73,8 @@ call that touches it is classified as `self`, and the command refuses to run the
 | Ordinary, like `git status` | runs, nobody asked | runs, nobody asked |
 | A question with options | your agent or you | your agent or you, free text allowed |
 | A plan, or a permission prompt | you | your agent or you |
-| Destructive, like `rm -rf data` | you | your agent or you |
-| Outward, like `git push --force` | you | your agent or you |
+| Destructive, like `rm -rf data` or `git push --force` | you | your agent or you |
+| Outward, like `npm publish` or `gh pr merge` | you | your agent or you |
 | Opaque, like `curl ... \| sh` | you | your agent or you |
 | Credentials, like reading `~/.ssh/id_ed25519` | you | you |
 | Catastrophic, like `rm -rf ~` | you | you, and no policy file can change this |
