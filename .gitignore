@@ -3,3 +3,4 @@ node_modules/
 .audit/
 *.log
 .DS_Store
+test/live-results.json
