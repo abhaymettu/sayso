@@ -29,7 +29,6 @@ const WARNINGS = new Map([
   ["too long to show in full", "This command is too long to show in full"],
 ]);
 
-// The daemon already marks these, but session and folder names reach the page unmarked, and the page is what the person trusts.
 const isHidden = (cp) =>
   cp < 0x09 || (cp > 0x0a && cp < 0x20) || (cp >= 0x7f && cp < 0xa0) || cp === 0xad || cp === 0x61c ||
   (cp >= 0x200b && cp <= 0x200f) || (cp >= 0x2028 && cp <= 0x202e) || (cp >= 0x2060 && cp <= 0x206f) ||
@@ -184,7 +183,6 @@ function startCountdown(target, expiresAt, onExpire) {
   return () => clearInterval(timer);
 }
 
-// One animation is the whole gesture: pressing plays it, letting go runs it backwards from wherever the fill has got to.
 function holdToConfirm(button, onConfirm) {
   const fill = button.querySelector(".hold-fill");
   const run = fill.animate([{ clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0 0 0)" }], { duration: HOLD_MS, easing: "linear", fill: "both" });
@@ -304,7 +302,6 @@ function realSignedPanel(sheetState) {
   return { panel, focus: panel.querySelector('[data-action="copy"]') };
 }
 
-// The button is under the thumb from the start, so a command longer than the screen has to reach the screen's end before it works.
 function holdUntilRead(state, hold, hint) {
   if (state.read) return;
   const labels = [...hold.querySelectorAll(".hold-label")];
@@ -328,7 +325,6 @@ function holdUntilRead(state, hold, hint) {
   };
 }
 
-// A phase is what the action area shows. Everything else on the sheet stays put, so the request never moves while it is being judged.
 const PHASES = {
   ready(state) {
     if (state.request.unread) {
@@ -538,7 +534,6 @@ function demoSignedPanel(state, fields, keys, restart) {
   const lieButton = panel.querySelector('[data-action="lie"]');
   let lying = false;
 
-  // The verdict comes from a real verify over whichever document is showing, never from the toggle.
   const check = async () => {
     const passes = await crypto.subtle.verify("Ed25519", keys.publicKey, state.signature, signingBytes(lying ? liedDoc : realDoc));
     if (lying) renderLie(field(panel, "proof-command"));
@@ -568,7 +563,6 @@ async function mountDemo(host) {
     host.replaceChildren(notice);
     return;
   }
-  // Generated fresh and held only in this variable. The demo never opens IndexedDB.
   const keys = await crypto.subtle.generateKey("Ed25519", false, ["sign", "verify"]);
   const rawPublic = await crypto.subtle.exportKey("raw", keys.publicKey);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", rawPublic));

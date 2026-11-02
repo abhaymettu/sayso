@@ -3,8 +3,6 @@ import { MAX_HOLD_SECONDS } from "./paths.mjs";
 
 export const RISKS = ["catastrophic", "self", "credentials", "destructive", "outward", "opaque", "prompt", "plan"];
 
-// Who may say yes to each kind of request. "human" means a signature from the person's own device, which the agent
-// can carry but cannot make. Saying no is always open to any authenticated agent.
 export const PRESETS = {
   strict: {
     approver: { catastrophic: "human", self: "human", credentials: "human", destructive: "human", outward: "human", opaque: "human", prompt: "human", plan: "human" },
@@ -24,9 +22,7 @@ export const PRESETS = {
   },
 };
 
-// These stay with the human whatever the file says. Wiping a disk or disarming the gate is never an agent's call.
 const FLOORS = ["catastrophic", "self"];
-// A wildcard stays inside one server, so `mcp__git*` can't also trust a server named `github-evil`.
 const NAMES_A_SERVER = /^mcp__[^*]+?__[^*]*\*?$/;
 
 export function normalizePolicy(raw) {
@@ -58,7 +54,6 @@ export function normalizePolicy(raw) {
   };
 }
 
-// A malformed file falls back to strict and says so; it never loosens anything.
 export function loadPolicy(file) {
   try {
     return normalizePolicy(JSON.parse(fs.readFileSync(file, "utf8")));
@@ -69,9 +64,6 @@ export function loadPolicy(file) {
   }
 }
 
-// A pass rule applies only to a command with no shell control characters, so `rm -rf cache; rm -rf ~` can never
-// ride in on a rule written for `rm -rf cache`.
-// Drops only what a tool's name alone raised. Sayso's own send_message is always trusted, since the policy already decides it.
 export function matchesToolRule(tool, rules) {
   if (tool === "mcp__sayso__send_message") return true;
   return rules.some((rule) => (rule.endsWith("*") ? tool.startsWith(rule.slice(0, -1)) && !tool.slice(rule.length - 1).includes("__") : tool === rule));

@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-// The daemon. Three doors with different powers: a Unix socket for hooks, which can open requests but never answer them,
-// an authenticated loopback HTTP port for agents, which can answer but never open them, and a second socket for the
-// owner's CLI, which can deny, look and stop the daemon. Node shows no peer credentials on a socket, so the file mode is the check.
+// Node shows no peer credentials on a socket, so the file mode is the check.
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -55,8 +53,6 @@ function authenticate(req, agents) {
   return null;
 }
 
-// A browser page can reach loopback. Rejecting foreign Host values stops DNS rebinding, and rejecting Origin stops
-// cross-site requests, so only programs with a token get past this point.
 function hostAllowed(req, port, allowedHosts) {
   const host = (req.headers.host ?? "").toLowerCase();
   if (host === `127.0.0.1:${port}` || host === `localhost:${port}` || host === `[::1]:${port}`) return true;
@@ -108,7 +104,6 @@ function pushToSinks(event, sinks, log) {
         signal: AbortSignal.timeout(5000),
       }).catch((error) => log(`webhook failed: ${error.message}`));
     } else if (sink.type === "command") {
-      // A daemon started by a hook has the hook's clean environment, so a sink keeps the PATH it was added with.
       const child = spawn(sink.argv[0], sink.argv.slice(1), { stdio: ["pipe", "ignore", "ignore"], env: sink.path ? { ...process.env, PATH: sink.path } : process.env });
       child.on("error", (error) => log(`notify command failed: ${error.message}`));
       child.stdin.on("error", () => {});
@@ -158,7 +153,6 @@ export async function startDaemon(paths = statePaths()) {
     const collect = () => {
       if (!tokenValid(digest)) return [];
       const events = box.eventsSince(since, !all);
-      // A first call asks "what needs me now", so resolved history is dropped and only open requests come back.
       return fresh ? events.filter((e) => e.type === "request.opened" && box.getRequest(e.request_id)?.status === "pending") : events;
     };
     const ready = collect();
@@ -199,7 +193,6 @@ export async function startDaemon(paths = statePaths()) {
 
   const toolContext = (req) => ({ waitForEvents: (args) => waitForEvents(args, sha256(bearer(req))), sendMessage });
 
-  // ---- hook door ----
   function handleHook(conn, message) {
     switch (message.op) {
       case "event":
@@ -249,7 +242,6 @@ export async function startDaemon(paths = statePaths()) {
     }
   }
 
-  // ---- owner door ----
   function handleOwner(conn, message) {
     switch (message.op) {
       case "status":
@@ -295,7 +287,6 @@ export async function startDaemon(paths = statePaths()) {
   const hookServer = lineServer(handleHook);
   const ownerServer = lineServer(handleOwner);
 
-  // ---- agent door ----
   async function handleMcp(req, res, actor) {
     let body;
     try {
@@ -387,13 +378,11 @@ export async function startDaemon(paths = statePaths()) {
   });
   await new Promise((resolve, reject) => {
     hookServer.once("error", reject);
-    // Hardened, the daemon runs as another user, so the session's user needs the socket. It still cannot answer on it.
     const bind = () => hookServer.listen(paths.sock, () => {
       fs.chmodSync(paths.sock, paths.sock === HARDENED_SOCK ? 0o666 : 0o600);
       resolve();
     });
     if (!fs.existsSync(paths.sock)) return bind();
-    // A socket file with nobody behind it is left over from a crash. One that answers means a daemon is already up.
     const probe = net.connect(paths.sock);
     probe.once("connect", () => {
       probe.destroy();
@@ -407,7 +396,7 @@ export async function startDaemon(paths = statePaths()) {
   await new Promise((resolve, reject) => {
     ownerServer.once("error", reject);
     fs.rmSync(paths.ownerSock, { force: true });
-    // The umask closes the moment between bind and chmod. Only this user, or root, can connect.
+    // The umask closes the moment between bind and chmod.
     const umask = process.umask(0o177);
     ownerServer.listen(paths.ownerSock, () => {
       process.umask(umask);

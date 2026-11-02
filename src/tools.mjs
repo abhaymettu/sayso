@@ -1,5 +1,3 @@
-// One table of what an agent can do. MCP lists it, the plain HTTP route calls it. Adding a door means no new logic.
-
 const object = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 
 export const INSTRUCTIONS = `sayso connects you to your person's running Claude Code sessions.

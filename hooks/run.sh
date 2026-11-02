@@ -17,15 +17,12 @@ fi
 # Hardened, the gate reads the real home from the password database rather than one a session started with.
 if [ -e /etc/sayso/hardened ]; then unset HOME; fi
 
-# Claude Code runs the tool if a hook exits with anything but 2, including a crash, a missing runtime or a kill.
-# So a failure of the gate itself is turned into a block here, in the one layer that needs no runtime.
+# By default Claude Code runs the tool if a hook exits with anything but 0 or 2, including a crash, a missing runtime or a kill.
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 mode=$2
 node_bin=${SAYSO_NODE:-node}
 if [ -z "$SAYSO_NODE" ] && [ -r "$HOME/.sayso/node-path" ]; then node_bin=$(cat "$HOME/.sayso/node-path"); fi
 if ! command -v "$node_bin" >/dev/null 2>&1; then
-  # The environment is clean by now, so a plugin install has no PATH of the person's own to search. A system install comes
-  # first and is never replaced by a folder in the home, which any process of this user can write to.
   for candidate in /usr/local/bin/node /opt/homebrew/bin/node "$HOME/.local/bin/node" "$HOME/.volta/bin/node" "$HOME"/.nvm/versions/node/*/bin/node "$HOME"/.local/share/fnm/aliases/default/bin/node "$HOME"/.fnm/aliases/default/bin/node "$HOME"/.asdf/shims/node "$HOME"/.local/share/mise/shims/node; do
     if [ -x "$candidate" ]; then
       node_bin=$candidate
@@ -33,8 +30,8 @@ if ! command -v "$node_bin" >/dev/null 2>&1; then
     fi
   done
 fi
-# Without this flag SIGUSR1 opens an inspector on the gate, and any local process could then run code inside it and print
-# an allow. It needs Node 22.14. An older Node refuses the flag, and that exit is a block.
+# Without this flag SIGUSR1 opens an inspector on the gate, and any process of this user could then run code inside it
+# and print an allow. It needs Node 22.14. An older Node refuses the flag, and that exit is a block.
 if [ "$mode" != gate ]; then
   "$node_bin" --disable-sigusr1 "$root/src/hook.mjs" "$mode"
   exit $?
@@ -44,9 +41,7 @@ if ! command -v "$node_bin" >/dev/null 2>&1; then
   exit 2
 fi
 
-# The gate keeps its own clocks, but a process that is stopped or stuck in a system call can't run them. This one needs
-# nothing from it. It fires past the longest hold (3000 s) and before the hook timeout (3600 s), and the kill becomes a
-# block below. A shell gives a background job /dev/null for stdin unless told otherwise, so the hook input goes by fd 3.
+# A shell gives a background job /dev/null for stdin unless told otherwise, so the hook input goes by fd 3.
 limit=${SAYSO_GATE_LIMIT:-3300}
 exec 3<&0
 "$node_bin" --disable-sigusr1 "$root/src/hook.mjs" gate <&3 3<&- &

@@ -18,8 +18,6 @@ function lastSeal(file) {
   }
 }
 
-// Each line seals itself and the line before it, so an edit, a deletion or a reorder shows up on verify. The chain has
-// no secret: someone who can write the file could rebuild all of it. Only a hardened install takes the file out of reach.
 export function openAudit(file) {
   let prev = lastSeal(file);
   return {
