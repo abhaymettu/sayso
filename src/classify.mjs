@@ -1033,7 +1033,7 @@ const TOO_DEEP = 'nesting too deep to read';
 const TOO_MANY = 'too many nested strings to read';
 const HAS_BLANK = /\s/;
 const HAS_QUOTE = /["'`]/;
-const RM_RECURSIVE = /(?:^|[\s;&|(`"'])(rm\s+-{1,2}[a-zA-Z-]*[rR][^\n]*)/;
+const RM_RECURSIVE = /(?:^|[\s;&|(`"'])(rm\s+-{1,2}[a-zA-Z-]*[rR][^\n"'`)\\]*)/;
 
 function keepingRealRisks(st, visit) {
   const inner = { ...st, env: new Map(st.env), flags: [], argvs: [] };
@@ -1055,7 +1055,7 @@ function spendStringWalk(st) {
 /** A shell runs each line it could parse before it reaches one it cannot, so a bad line does not hide the good ones. */
 function walkCandidate(source, st) {
   if (!spendStringWalk(st)) return;
-  const text = source.replace(/^\s*:?!/, '').replace(/\$\{?IFS\}?/g, ' ');
+  const text = source.replace(/^\s*[:+]?!/, '').replace(/\$\{?IFS\}?/g, ' ');
   let tokens;
   try {
     tokens = lex(text);
@@ -1099,10 +1099,11 @@ const TEXT_OPTION = /^--(?:body|title|message|description|comment|subject|notes|
 
 function walkValue(script, isCommandSlot, st) {
   const blank = HAS_BLANK.test(script) || script.includes('IFS');
-  if (!isCommandSlot && !blank) return;
-  for (const value of valuesIn(script)) walkCandidate(value, st);
-  if (blank && HAS_QUOTE.test(script)) checkEmbeddedShell(script, st, false);
-  if (blank) {
+  const quoted = HAS_QUOTE.test(script);
+  if (!isCommandSlot && !blank && !quoted) return;
+  if (isCommandSlot || blank) for (const value of valuesIn(script)) walkCandidate(value, st);
+  if (quoted) checkEmbeddedShell(script, st, false);
+  else if (blank) {
     const rm = RM_RECURSIVE.exec(script);
     if (rm) walkCandidate(rm[1], st);
   }
@@ -1110,10 +1111,12 @@ function walkValue(script, isCommandSlot, st) {
 
 function walkArgStrings(args, st) {
   for (let i = 0; i < args.length; i++) {
-    const script = args[i].script;
+    const { script, text, dynamic } = args[i];
     const before = args[i - 1]?.text;
     if (TEXT_FLAGS.has(before) || TEXT_OPTION.test(script)) continue;
     walkValue(script, COMMAND_FLAG.test(before ?? '') || COMMAND_OPTION.test(script) || COMMAND_ENV_WORD.test(script), st);
+    // X='rm -rf y'; tool "$X": the script spelling is only $X, and the value is known.
+    if (!dynamic && text !== script && HAS_BLANK.test(text)) walkValue(text, false, st);
   }
 }
 
@@ -1391,9 +1394,9 @@ function peelWrapper(spec, args) {
 // Their arguments are text or paths they never run, so a string there that reads like a command is only data.
 const DATA_ONLY = new Set(['echo', 'printf', 'grep', 'rg', 'ag', 'ack', 'cat', 'tee', 'head', 'tail', 'wc', 'cut', 'tr', 'uniq', 'ls', 'jq', 'yq', 'diff', 'test', '[', ':', 'true', 'false', 'which', 'type', 'basename', 'dirname', 'realpath', 'readlink', 'stat', 'file', 'touch', 'mkdir', 'date', 'sleep', 'base64', 'xxd', 'od', 'pbcopy', 'wl-copy', 'xclip', 'logger', 'say', 'notify-send', 'wall', 'export', 'declare', 'typeset', 'local', 'readonly', 'read', 'cd', 'pushd']);
 // Their rules read their own strings, so the general walk would only read them twice.
-const READS_OWN_STRINGS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'eval', 'su', 'trap', 'watch', 'parallel', 'xargs', 'find', 'git', 'sed', 'awk', 'psql', 'mysql', 'sqlite3', 'mongosh', 'cockroach', 'clickhouse-client']);
+const READS_OWN_STRINGS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'eval', 'su', 'trap', 'watch', 'parallel', 'xargs', 'find', 'git', 'sed', 'awk']);
 // Stdin here is data even though the arguments may not be.
-const STDIN_IS_DATA = new Set(['sort', 'less', 'more', 'patch', 'curl', 'wget', 'nc', 'tar', 'gzip', 'gunzip', 'gh', 'mail', 'sendmail']);
+const STDIN_IS_DATA = new Set(['sort', 'less', 'more', 'patch', 'curl', 'wget', 'nc', 'tar', 'gzip', 'gunzip', 'gh', 'mail', 'sendmail', 'psql', 'mysql', 'sqlite3', 'mongosh', 'cockroach', 'clickhouse-client']);
 
 function dispatch(argv, io, st) {
   const head = argv[0];
@@ -1540,6 +1543,7 @@ const inPlaceEdits = (args) => (hasShortFlag(args, 'i') || hasFlag(args, '--in-p
 const WRITE_TARGETS = {
   __proto__: null,
   tee: allPositionals,
+  sponge: allPositionals,
   mv: allPositionals,
   rm: allPositionals,
   unlink: allPositionals,
@@ -1636,6 +1640,8 @@ function ruleRimraf(args, _io, st) {
   for (const target of positionals(args)) classifyRecursiveDelete(target, st);
 }
 
+const CONFIG_DIR_IN_HOME = /^\.claude[^/]*$|^\.claude-[^/]+\/[^/]+$/i;
+
 function ruleCopyFromNull(args, _io, st) {
   const pos = positionals(args);
   if (pos.length === 2 && pos[0].text === '/dev/null') checkEmptiedFiles([pos[1]], st);
@@ -1647,7 +1653,10 @@ function ruleMv(args, io, st) {
   ruleCopyFromNull(args, io, st);
   if (resolvePath(pos[pos.length - 1].text, st) === '/dev/null') flag(st, DESTRUCTIVE, 'move into /dev/null');
   for (const source of pos.slice(0, -1)) {
-    if (!source.dynamic && isProtectedRoot(resolvePath(source.text, st), st)) flag(st, DESTRUCTIVE, 'moves a protected root directory');
+    if (source.dynamic) continue;
+    const path = resolvePath(source.text, st);
+    if (isProtectedRoot(path, st)) flag(st, DESTRUCTIVE, 'moves a protected root directory');
+    if (CONFIG_DIR_IN_HOME.test(homeRelative(path, st) ?? '') || (st.configDir && path === st.configDir)) flag(st, SELF, 'moves the agent settings away');
   }
 }
 
@@ -1774,6 +1783,17 @@ function always(risk, why) {
 function ruleSystemctl(args, _io, st) {
   const verb = positionals(args)[0]?.text;
   if (verb === 'poweroff' || verb === 'reboot' || verb === 'halt') flag(st, DESTRUCTIVE, 'shuts the machine down');
+  ruleServiceManager(args, _io, st);
+}
+
+function ruleServiceManager(args, _io, st) {
+  const pos = positionals(args);
+  if (pos.slice(1).some((arg) => /sayso/i.test(arg.text)) && !/^(?:status|show|print|list|is-active|cat)$/.test(pos[0].text)) flag(st, SELF, 'stops or changes the guard service');
+}
+
+function ruleLaunchctl(args, io, st) {
+  ruleServiceManager(args, io, st);
+  ruleArgvRunner(args, io, st);
 }
 
 // git. Each entry returns a reason when the subcommand destroys work.
@@ -2214,7 +2234,10 @@ const SCRIPT_PATTERNS = [
   [/b64decode[\s\S]*(?:exec|eval)\(|(?:exec|eval)\([\s\S]*b64decode/, 'inline script runs decoded code'],
 ];
 // Perl, Ruby and PHP also run a process with no parenthesis at all.
-const BARE_PROCESS = /`|(?<![.\w$@%])(?:system|exec)\s+["'$@%(\[]|%x[({[<|!/]|\bqx\s*[({[<|!/]|\bopen\s*\(?[^,\n]*,\s*["'](?:\||-\||\|-)|\|["']\s*\)/;
+const RUNS_ITS_ARGV = /\b(?:exec|system)\s+@ARGV\b/;
+const BARE_PROCESS = /(?<![.\w$@%])(?:system|exec)\s+(?!@ARGV\b)["'$@%(\[]|%x[({[<|!/]|\bqx\s*[({[<|!/]|\bopen\s*\(?[^,\n]*,\s*["'](?:\||-\||\|-)|\|["']\s*\)/;
+// A backtick only runs something outside a string or a regex, and one-liners are full of s/`a`/b/.
+const NOT_BACKTICK_CODE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:s|y|tr|m)([/|#!,])(?:\\.|(?!\1)[^\\])*\1(?:(?:\\.|(?!\1)[^\\])*\1)?/g;
 const PROCESS_EXEC = /system|subprocess|child_process|exec|spawn|popen|shell_exec|passthru|proc_open|open3|do shell script|%x|\bqx\b|`|\|\s*["']|["']\s*\|/i;
 const STRING_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
 // `["rm", "-rf", "x"]`, `system "rm", "-rf", "x"` and `spawn("rm", ["-rf", "x"])` are one command in several strings.
@@ -2235,7 +2258,7 @@ function checkInlineCode(code, sole, st, patterns = CODE_PATTERNS, runsBare = fa
   for (const [pattern, why] of patterns) {
     if (pattern.test(code)) flag(st, OPAQUE, why);
   }
-  if (runsBare && BARE_PROCESS.test(code)) flag(st, OPAQUE, 'inline code runs a process');
+  if (runsBare && (BARE_PROCESS.test(code) || (code.includes('`') && code.replace(NOT_BACKTICK_CODE, '').includes('`')))) flag(st, OPAQUE, 'inline code runs a process');
   if (SECRET_IN_CODE.test(code)) flag(st, CREDENTIALS, 'inline code names a secret file');
   if (codeNamesGuard(code, st)) flag(st, SELF, 'inline code names the guard state');
   if (code.includes('7428') && LOOPBACK_IN_CODE.test(code)) flag(st, SELF, 'talks to the guard port on loopback');
@@ -2268,6 +2291,8 @@ function checkEmbeddedShell(code, st, singleWords) {
     if (!singleWords && !HAS_BLANK.test(candidate)) continue;
     for (const value of valuesIn(candidate)) walkCandidate(value, st);
   }
+  const rm = RM_RECURSIVE.exec(code);
+  if (rm) walkCandidate(rm[1], st);
 }
 
 const INLINE_CODE = {
@@ -2297,7 +2322,11 @@ function gluedCode(text, spec) {
 
 function interpreterRule(spec) {
   return (args, io, st) => {
-    const inline = (code, sole) => checkInlineCode(code, sole, st, CODE_PATTERNS, spec.runsBare);
+    let runsArgv = false;
+    const inline = (code, sole) => {
+      runsArgv ||= spec.runsBare === true && RUNS_ITS_ARGV.test(code);
+      checkInlineCode(code, sole, st, CODE_PATTERNS, spec.runsBare);
+    };
     const notCode = [];
     let hasProgram = false;
     for (let i = 0; i < args.length; i++) {
@@ -2348,7 +2377,9 @@ function interpreterRule(spec) {
       notCode.push(...args.slice(i));
       break;
     }
-    walkCommandStrings(notCode, io, st, hasProgram);
+    // `perl -e 'alarm 30; exec @ARGV' 30 cmd` is how macOS spells timeout, so what it runs is the command to read.
+    if (runsArgv) dispatch(notCode.slice(notCode.findIndex((arg) => !/^\d+$/.test(arg.text))), { ...NO_IO }, st);
+    else walkCommandStrings(notCode, io, st, hasProgram);
     if (hasProgram) return;
     if (io.heredoc !== null) checkInlineCode(io.heredoc, false, st, SCRIPT_PATTERNS);
     else if (io.herestring !== null) inline(io.herestring, false);
@@ -2372,7 +2403,7 @@ function ruleAwk(args, _io, st) {
 }
 
 const SED_RUNS_COMMAND = /(?:^|[;{}\n\d$/])\s*e\s+([^;}\n]+)/g;
-const SED_EVAL_FLAG = /\bs([^\w\s])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiImM\d]*e/;
+const SED_EVAL_FLAG = /(?:^|[;{}\n\d$,])\s*s([^\w\s])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiImM\d]*e(?![\w/])/;
 
 /** GNU sed runs commands with its `e` command and the `e` flag of `s`. */
 function ruleSed(args, _io, st) {
@@ -2464,6 +2495,8 @@ const RULES = {
   halt: always(DESTRUCTIVE, 'shuts the machine down'),
   poweroff: always(DESTRUCTIVE, 'shuts the machine down'),
   systemctl: ruleSystemctl,
+  launchctl: ruleLaunchctl,
+  service: ruleServiceManager,
   git: ruleGit,
   psql: ruleSql,
   mysql: ruleSql,
@@ -2516,7 +2549,7 @@ const RULES = {
   pushd: ruleCd,
 };
 
-for (const name of ['tmux', 'screen', 'dtach', 'abduco', 'script', 'systemd-run', 'nsenter', 'unshare', 'firejail', 'bwrap', 'sandbox-exec', 'strace', 'ltrace', 'dtruss', 'gdb', 'valgrind', 'perf', 'entr', 'direnv', 'mise', 'asdf', 'rbenv', 'pyenv', 'nodenv', 'conda', 'dotenv', 'op', 'doppler', 'aws-vault', 'launchctl', 'pkexec', 'runuser', 'setpriv', 'taskset', 'numactl', 'prlimit', 'cpulimit', 'proxychains', 'proxychains4', 'torsocks', 'nix-shell', 'devbox']) {
+for (const name of ['tmux', 'screen', 'dtach', 'abduco', 'script', 'systemd-run', 'nsenter', 'unshare', 'firejail', 'bwrap', 'sandbox-exec', 'strace', 'ltrace', 'dtruss', 'gdb', 'valgrind', 'perf', 'entr', 'direnv', 'mise', 'asdf', 'rbenv', 'pyenv', 'nodenv', 'conda', 'dotenv', 'op', 'doppler', 'aws-vault', 'pkexec', 'runuser', 'setpriv', 'taskset', 'numactl', 'prlimit', 'cpulimit', 'proxychains', 'proxychains4', 'torsocks', 'nix-shell', 'devbox']) {
   RULES[name] = ruleArgvRunner;
 }
 

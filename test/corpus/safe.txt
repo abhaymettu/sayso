@@ -317,6 +317,12 @@ perl -e 'print 1'
 perl -le'print 1'
 perl -i.bak -pe 's/a/b/' f
 perl -pi -e 's/a/b/' f
+perl -pi -e 's/`a`/b/' f
+perl -e 'print "`a`"'
+systemctl status sayso
+launchctl list sayso
+perl -e 'alarm shift; exec @ARGV' 30 npm test
+perl -e 'alarm 30; exec @ARGV' npm test
 ruby -e 'puts 1'
 ruby -ne 'puts $_' f
 php -r 'echo 1;'

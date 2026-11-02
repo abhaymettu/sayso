@@ -616,3 +616,24 @@ destructive	bash -c '> thesis.tex'
 destructive	bash -c ': > thesis.tex'
 destructive	tool ': > thesis.tex'
 destructive	rsync -a --delete empty/ ~/Documents/
+# Found while attacking the fix.
+self	mv ~/.claude ~/.claude-off
+self	mv ~/.claude-work /tmp/x
+self	sponge ~/.claude/settings.json
+self	systemctl stop sayso
+self	launchctl bootout gui/501/com.sayso.daemon
+destructive	mongosh --eval 'run("rm","-rf","x")'
+destructive	erl -eval 'x("y(\"rm -rf z\")")'
+destructive	X='rm -rf x'; tool "$X"
+destructive	for c in 'rm -rf x'; do tool "$c"; done
+destructive	less '+!rm -rf x' f
+destructive	make --eval='x:;rm -rf y' x
+destructive	tar -xf a --checkpoint-action=exec='rm -rf x'
+destructive	timeout 5 git -c core.pager='rm -rf x' log
+destructive	sudo PAGER='rm -rf x' git log
+destructive	find . -exec perl -e 'system "rm -rf x"' \;
+destructive	ls | xargs perl -e 'system "rm -rf x"'
+opaque	sed 's/a/b/ge' f
+destructive	perl -e 'alarm shift; exec @ARGV' 30 rm -rf x
+destructive	perl -e 'alarm shift; exec @ARGV' 30 reboot
+destructive	perl -e 'exec @ARGV' sh -c 'rm -rf x'
