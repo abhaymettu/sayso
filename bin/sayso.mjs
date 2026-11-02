@@ -66,11 +66,15 @@ const writeJson = (file, value) => {
 };
 
 const portOf = () => Number(process.env.SAYSO_PORT ?? readJson(paths.config, {}).port ?? DEFAULT_PORT);
-const claudeSettingsPath = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude"), "settings.json");
+const claudeConfigDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude");
+const claudeSettingsPath = () => path.join(claudeConfigDir(), "settings.json");
+const MANAGED_SETTINGS = "/etc/claude-code/managed-settings.json";
+// The version the hook facts were measured on, and so the oldest known to block on a hook failure.
+const MEASURED_CLAUDE = [2, 1, 303];
 
 function askDaemon(message, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
-    const socket = net.connect(paths.sock);
+    const socket = net.connect(paths.ownerSock);
     let buffer = "";
     const timer = setTimeout(() => {
       socket.destroy();
@@ -80,7 +84,7 @@ function askDaemon(message, timeoutMs = 3000) {
     socket.on("data", (chunk) => (buffer += chunk));
     socket.on("error", (error) => {
       clearTimeout(timer);
-      reject(error);
+      reject(error.code === "EACCES" ? new Error("on a hardened install only root can ask the daemon that, so use sudo") : error);
     });
     socket.on("close", () => {
       clearTimeout(timer);
@@ -99,6 +103,8 @@ async function ensureDaemon(root = appRoot) {
     await askDaemon({ op: "status" }, 500);
     return true;
   } catch {}
+  // systemd owns a hardened daemon. One started here could not bind its port.
+  if (isHardened()) return false;
   const child = spawn(process.execPath, [path.join(root, "src", "server.mjs")], { detached: true, stdio: "ignore", env: process.env });
   child.unref();
   for (let i = 0; i < 60; i++) {
@@ -116,17 +122,30 @@ const reload = () => askDaemon({ op: "reload" }).catch(() => {});
 const MARK = "/hooks/run.sh";
 const isOurs = (hook) => typeof hook?.command === "string" && hook.command.includes(MARK) && hook.command.includes("sayso");
 
-function hookTable(root, nodePath) {
+const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+
+// The shared table clears the environment, because a repository's settings can set `env` for the hook process. Values set
+// here come after the ones it forwards, so they win. The absolute paths in it are why a repository's PATH can't reach it.
+function hookTable(root, pins) {
   const shared = JSON.parse(fs.readFileSync(path.join(root, "hooks", "hooks.json"), "utf8")).hooks;
-  const prefix = `SAYSO_NODE=${JSON.stringify(nodePath)} SAYSO_HOME=${JSON.stringify(paths.dir)} `;
+  const assigned = Object.entries(pins).map(([name, value]) => `${name}=${shellQuote(value)} `).join("");
   const out = {};
   for (const [event, groups] of Object.entries(shared))
     out[event] = groups.map((group) => ({
       ...group,
-      hooks: group.hooks.map((hook) => ({ ...hook, command: prefix + hook.command.replaceAll("${CLAUDE_PLUGIN_ROOT}", root) })),
+      hooks: group.hooks.map((hook) => ({ ...hook, command: hook.command.replaceAll("${CLAUDE_PLUGIN_ROOT}", root).replace("/bin/sh ", `${assigned}/bin/sh `) })),
     }));
   return out;
 }
+
+const personalPins = () => ({
+  HOME: homedir(),
+  SAYSO_NODE: process.execPath,
+  SAYSO_HOME: paths.dir,
+  CLAUDE_CONFIG_DIR: claudeConfigDir(),
+  ...(process.env.SAYSO_PORT ? { SAYSO_PORT: process.env.SAYSO_PORT } : {}),
+  ...(process.env.SAYSO_SOCK ? { SAYSO_SOCK: process.env.SAYSO_SOCK } : {}),
+});
 
 function removeOurHooks(settings) {
   for (const [event, groups] of Object.entries(settings.hooks ?? {})) {
@@ -150,7 +169,7 @@ function installHooks(root) {
   }
   removeOurHooks(settings);
   settings.hooks ??= {};
-  for (const [event, groups] of Object.entries(hookTable(root, process.execPath))) settings.hooks[event] = [...(settings.hooks[event] ?? []), ...groups];
+  for (const [event, groups] of Object.entries(hookTable(root, personalPins()))) settings.hooks[event] = [...(settings.hooks[event] ?? []), ...groups];
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
   return file;
@@ -298,18 +317,40 @@ async function doctor() {
   check(nodeMajor >= 20, `node ${process.versions.node}`, "sayso needs Node 20 or newer");
   const claude = spawnSync("claude", ["--version"], { encoding: "utf8" });
   check(claude.status === 0, `claude ${claude.stdout?.trim() ?? "not found"}`, "install Claude Code");
+  const claudeVersion = (/(\d+)\.(\d+)\.(\d+)/.exec(claude.stdout ?? "") ?? []).slice(1).map(Number);
+  const older = MEASURED_CLAUDE.findIndex((part, i) => (claudeVersion[i] ?? 0) !== part);
+  if (claude.status === 0 && older >= 0 && (claudeVersion[older] ?? 0) < MEASURED_CLAUDE[older]) check(false, `claude is older than ${MEASURED_CLAUDE.join(".")}, the version sayso was measured on, so a hook timeout or a killed wrapper may let the tool run`, "update Claude Code");
   const settings = readJson(claudeSettingsPath(), {});
-  const inSettings = Object.values(settings.hooks ?? {}).flat().some((g) => (g.hooks ?? []).some(isOurs));
+  const hasOurs = (table) => Object.values(table.hooks ?? {}).flat().some((g) => (g.hooks ?? []).some(isOurs));
+  const inSettings = hasOurs(settings);
   const asPlugin = Object.keys(settings.enabledPlugins ?? {}).some((p) => p.startsWith("sayso@"));
-  check(inSettings || asPlugin, inSettings ? `hooks in ${claudeSettingsPath()}` : asPlugin ? "installed as a plugin" : "hooks not installed", "run: sayso setup");
+  const managed = isHardened() && hasOurs(readJson(MANAGED_SETTINGS, {}));
+  check(inSettings || asPlugin || managed, managed ? `hooks in ${MANAGED_SETTINGS}` : inSettings ? `hooks in ${claudeSettingsPath()}` : asPlugin ? "installed as a plugin" : "hooks not installed", "run: sayso setup");
+  if (!managed) {
+    check(true, `covers sessions under the config folder ${claudeConfigDir()}. A session under another CLAUDE_CONFIG_DIR has no gate, and neither does --bare, --safe-mode, --setting-sources without user, or an Agent SDK host with settingSources: []`);
+    if (settings.disableAllHooks) check(false, `${claudeSettingsPath()} sets disableAllHooks, so the gate is off`, "remove it");
+    for (let dir = process.cwd(), last = ""; dir !== last; last = dir, dir = path.dirname(dir)) {
+      if (dir === homedir()) continue;
+      for (const name of ["settings.json", "settings.local.json"]) {
+        const file = path.join(dir, ".claude", name);
+        const project = readJson(file, {});
+        if (project.disableAllHooks) check(false, `${file} sets disableAllHooks, so sessions in this folder have no gate`, "remove it, and don't trust the repository that shipped it");
+        const envNames = Object.keys(project.env ?? {});
+        if (envNames.length) check(false, `${file} sets env (${envNames.join(", ")}). The gate clears its own environment, but CLAUDE_CODE_SHELL_PREFIX here would still stop it from running`, "read it before running a session in this folder");
+      }
+    }
+  }
   let status = null;
   try {
     status = await askDaemon({ op: "status" }, 1000);
   } catch {}
-  check(!!status, status ? `daemon pid ${status.pid}, port ${status.port}` : "daemon not running", "it starts with the next session, or run: sayso daemon start");
+  // Without root a hardened install keeps the owner's door shut, so ask the one door anyone can.
+  const healthy = status || (isHardened() && (await fetch(`http://127.0.0.1:${portOf()}/health`, { signal: AbortSignal.timeout(1000) }).then((r) => r.ok, () => false)));
+  check(!!healthy, status ? `daemon pid ${status.pid}, port ${status.port}` : healthy ? `daemon answers on port ${portOf()}` : "daemon not running", "it starts with the next session, or run: sayso daemon start");
   try {
     const mode = fs.statSync(paths.dir).mode & 0o777;
-    check(mode === 0o700, `state folder ${paths.dir} is private`, `chmod 700 ${paths.dir}`);
+    const wanted = isHardened() ? 0o755 : 0o700;
+    check(mode === wanted, `state folder ${paths.dir} is ${isHardened() ? "writable only by the daemon" : "private"}`, `chmod ${wanted.toString(8)} ${paths.dir}`);
   } catch {
     check(false, "state folder missing", "run: sayso setup");
   }
@@ -375,7 +416,7 @@ async function uninstall() {
 }
 
 // Claude Code cannot remove managed hooks from user settings, and a session running as you cannot signal another user's
-// daemon or rewrite files it does not own. This is the difference between a seatbelt and a lock.
+// daemon, reach its owner socket or rewrite files it does not own. This is the difference between a seatbelt and a lock.
 function stopDaemonAt(sock) {
   return new Promise((resolve) => {
     const socket = net.connect(sock);
@@ -456,25 +497,23 @@ WantedBy=multi-user.target
 `,
   );
   // It would hold the port, and the hardened daemon could not start.
-  await stopDaemonAt(personal.sock);
+  await stopDaemonAt(personal.ownerSock);
   run("systemctl", "daemon-reload");
   run("systemctl", "enable", "--now", "sayso.service");
   run("systemctl", "restart", "sayso.service");
 
   const managedDir = "/etc/claude-code";
-  const managedFile = path.join(managedDir, "managed-settings.json");
+  const managedFile = MANAGED_SETTINGS;
   fs.mkdirSync(managedDir, { recursive: true, mode: 0o755 });
   let managed = {};
   if (fs.existsSync(managedFile)) managed = JSON.parse(fs.readFileSync(managedFile, "utf8"));
   removeOurHooks(managed);
   managed.hooks ??= {};
-  const table = JSON.parse(fs.readFileSync(path.join(lib, "hooks", "hooks.json"), "utf8")).hooks;
-  const prefix = `SAYSO_NODE=${JSON.stringify(nodePath)} SAYSO_HOME=${HARDENED_HOME} SAYSO_SOCK=${HARDENED_SOCK} `;
-  for (const [event, groups] of Object.entries(table))
-    managed.hooks[event] = [
-      ...(managed.hooks[event] ?? []),
-      ...groups.map((g) => ({ ...g, hooks: g.hooks.map((h) => ({ ...h, command: prefix + h.command.replaceAll("${CLAUDE_PLUGIN_ROOT}", lib) })) })),
-    ];
+  // HOME is left out, so the gate reads the real one from the password database.
+  for (const [event, groups] of Object.entries(hookTable(lib, { SAYSO_NODE: nodePath, SAYSO_HOME: HARDENED_HOME, SAYSO_SOCK: HARDENED_SOCK })))
+    managed.hooks[event] = [...(managed.hooks[event] ?? []), ...groups.map((g) => ({ ...g, hooks: g.hooks.map((h) => ({ ...h, command: h.command.replace(' HOME="$HOME"', "") })) }))];
+  // These act before any hook command does, so clearing them there is too late. Managed settings beat a repository's.
+  managed.env = { ...managed.env, ...Object.fromEntries(["CLAUDE_CODE_SHELL_PREFIX", "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH"].map((name) => [name, ""])) };
   fs.writeFileSync(managedFile, `${JSON.stringify(managed, null, 2)}\n`, { mode: 0o644 });
 
   const personalSettings = path.join(invokingHome(), ".claude", "settings.json");
@@ -494,7 +533,7 @@ From now on change agents, devices and policy with sudo, for example: sudo sayso
 
 function printRequests(requests) {
   if (!requests.length) return console.log("no pending requests");
-  for (const r of requests) console.log(`${r.id}  ${r.session}  ${r.risk}  approver:${r.approver}  until ${r.expires_at}\n  ${r.untrusted.action.split("\n").join("\n  ")}`);
+  for (const r of requests) console.log(`${r.id}  ${r.untrusted.session}  ${r.risk}  approver:${r.approver}  until ${r.expires_at}\n  ${r.untrusted.action.split("\n").join("\n  ")}`);
 }
 
 const USAGE = `sayso: your agent can see your Claude Code sessions and answer them. Nothing destructive runs without your say-so.
@@ -538,21 +577,21 @@ switch (command) {
     break;
   case "status": {
     await ensureDaemon();
-    const status = await askDaemon({ op: "status" });
+    const status = await askDaemon({ op: "status" }).catch((error) => die(error.message));
     if (flag("json")) {
       console.log(JSON.stringify(status, null, 2));
       break;
     }
     console.log(`daemon pid ${status.pid}, port ${status.port}, policy ${status.policy.preset}, agents: ${status.agents.join(", ") || "none"}, paired devices: ${status.keys.length}\n`);
     if (!status.sessions.length) console.log("no sessions seen yet");
-    for (const s of status.sessions) console.log(`${s.state.padEnd(12)} ${s.name}  ${s.permission_mode ?? ""}  ${s.session_id}`);
+    for (const s of status.sessions) console.log(`${s.state.padEnd(12)} ${s.untrusted.name}  ${s.permission_mode ?? ""}  ${s.session_id}`);
     console.log();
     printRequests(status.requests);
     break;
   }
   case "deny": {
     if (!args[0]) die("usage: sayso deny REQUEST_ID");
-    console.log(JSON.stringify(await askDaemon({ op: "deny", request_id: args[0], reason: option("reason") })));
+    console.log(JSON.stringify(await askDaemon({ op: "deny", request_id: args[0], reason: option("reason") }).catch((error) => die(error.message))));
     break;
   }
   case "agent": {
@@ -563,6 +602,7 @@ switch (command) {
       await reload();
       console.log(flag("json") ? JSON.stringify({ name, token, url: `http://127.0.0.1:${portOf()}/mcp` }) : connectionInstructions(name, token));
     } else if (sub === "revoke") {
+      refuseInsideSession("sayso agent revoke");
       const agents = readJson(paths.agents, []);
       const found = agents.find((a) => a.name === name && !a.revoked);
       if (!found) die(`no active agent named ${name}`);
@@ -588,6 +628,7 @@ switch (command) {
     break;
   }
   case "notify": {
+    if (args[0] === "add" || args[0] === "clear") refuseInsideSession(`sayso notify ${args[0]}`);
     const config = readJson(paths.config, {});
     config.notify ??= [];
     if (args[0] === "add" && args[1] === "webhook") {
@@ -595,7 +636,7 @@ switch (command) {
     } else if (args[0] === "add" && args[1] === "command") {
       const dash = args.indexOf("--");
       if (dash < 0) die("usage: sayso notify add command -- ARGV...");
-      config.notify.push({ type: "command", argv: args.slice(dash + 1) });
+      config.notify.push({ type: "command", argv: args.slice(dash + 1), path: process.env.PATH });
     } else if (args[0] === "clear") {
       config.notify = [];
     } else {

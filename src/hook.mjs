@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Runs inside every Claude Code hook. Claude Code treats a crash, a kill or a timeout here as "carry on" and runs the
-// tool, so hooks/run.sh turns any non-zero exit into a block, and every path below must end in an explicit answer.
+// Runs inside every Claude Code hook. By default Claude Code treats a crash, a kill or a timeout here as "carry on" and runs
+// the tool, so hooks/run.sh turns any non-zero exit into a block, and every path below must end in an explicit answer.
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -8,12 +8,16 @@ import net from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 import { classifyToolCall } from "./classify.mjs";
-import { statePaths } from "./paths.mjs";
-import { loadPolicy, matchesPassRule } from "./policy.mjs";
+import { MAX_HOLD_SECONDS, statePaths } from "./paths.mjs";
 
 const paths = statePaths();
 const mode = process.argv[2];
+const READ_LIMIT_MS = 3000;
+const ASK_LIMIT_MS = 2000;
+const OPEN_LIMIT_MS = 10000;
+const HOLD_GRACE_MS = 3000;
 
 function writeAndExit(obj) {
   fs.writeSync(1, JSON.stringify(obj));
@@ -58,7 +62,7 @@ function isAttended() {
   if (process.env.CLAUDE_CODE_SESSION_ATTENDED === "0") return false;
   const pid = process.env.CLAUDE_PID;
   if (!pid) return false;
-  const tty = spawnSync("ps", ["-o", "tty=", "-p", pid], { encoding: "utf8" }).stdout?.trim();
+  const tty = spawnSync("ps", ["-o", "tty=", "-p", pid], { encoding: "utf8", timeout: ASK_LIMIT_MS }).stdout?.trim();
   return !!tty && tty !== "?" && tty !== "??";
 }
 
@@ -72,26 +76,23 @@ function sessionFields(input) {
   };
 }
 
-function holdAtDaemon(payload, onOpened) {
+function holdAtDaemon(payload) {
   return new Promise((resolve) => {
-    let settled = false;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
+    const started = Date.now();
+    const absolute = started + MAX_HOLD_SECONDS * 1000 + 30000;
+    // Until the daemon says `opened`, only this ends the wait. A stopped daemon still accepts connections.
+    let deadline = started + OPEN_LIMIT_MS;
+    let socket = null;
+    // Wall clock, so a hold that spans a laptop sleep ends on wake rather than running on.
+    setInterval(() => {
+      if (Date.now() <= deadline) return;
+      resolve({ failure: "no answer from the sayso daemon in time" });
+      socket?.destroy();
+    }, 250);
     connect(2000)
-      .then((socket) => {
+      .then((connected) => {
+        socket = connected;
         let buffer = "";
-        let deadline = null;
-        const watchdog = setInterval(() => {
-          // Wall clock, so a hold that spans a laptop sleep ends on wake rather than running on.
-          if (deadline && Date.now() > deadline + 3000) {
-            socket.destroy();
-            finish({ failure: "no answer from the sayso daemon in time" });
-          }
-        }, 1000);
-        watchdog.unref();
         socket.setEncoding("utf8");
         socket.on("data", (chunk) => {
           buffer += chunk;
@@ -100,63 +101,74 @@ function holdAtDaemon(payload, onOpened) {
             const message = JSON.parse(buffer.slice(0, end));
             buffer = buffer.slice(end + 1);
             if (message.opened) {
-              deadline = Date.parse(message.expires_at);
-              onOpened?.(message);
+              const until = Date.parse(message.expires_at) + HOLD_GRACE_MS;
+              deadline = until < absolute ? until : absolute;
             } else {
-              finish(message);
+              resolve(message);
             }
           }
         });
-        socket.on("error", () => finish({ failure: "the connection to the sayso daemon broke" }));
-        socket.on("close", () => finish({ failure: "the connection to the sayso daemon closed" }));
+        socket.on("error", () => resolve({ failure: "the connection to the sayso daemon broke" }));
+        socket.on("close", () => resolve({ failure: "the connection to the sayso daemon closed" }));
         socket.write(`${JSON.stringify({ op: "hold", ...payload })}\n`);
       })
-      .catch(() => finish({ failure: "the sayso daemon is not running" }));
+      .catch(() => resolve({ failure: "the sayso daemon is not running" }));
+  });
+}
+
+// One question and one answer. A stuck daemon counts as no answer.
+function ask(message, retryMs = 0) {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve(null), ASK_LIMIT_MS + retryMs);
+    connect(retryMs)
+      .then((socket) => {
+        let buffer = "";
+        socket.setEncoding("utf8");
+        socket.on("data", (chunk) => (buffer += chunk));
+        socket.on("error", () => resolve(null));
+        socket.on("close", () => {
+          try {
+            resolve(JSON.parse(buffer));
+          } catch {
+            resolve(null);
+          }
+        });
+        socket.write(`${JSON.stringify(message)}\n`);
+      })
+      .catch(() => resolve(null));
   });
 }
 
 // Most tool calls stop at the existsSync. The daemon hands over the text, so this works when the hook cannot write there.
-function takeMail(sessionId) {
-  if (!fs.existsSync(path.join(paths.mail, encodeURIComponent(sessionId ?? "")))) return Promise.resolve(null);
-  return connect(0)
-    .then(
-      (socket) =>
-        new Promise((resolve) => {
-          let buffer = "";
-          socket.setEncoding("utf8");
-          socket.on("data", (chunk) => (buffer += chunk));
-          socket.on("error", () => resolve(null));
-          socket.on("close", () => {
-            try {
-              resolve(JSON.parse(buffer).text ?? null);
-            } catch {
-              resolve(null);
-            }
-          });
-          socket.write(`${JSON.stringify({ op: "take_mail", session_id: sessionId })}\n`);
-        }),
-    )
-    .catch(() => null);
+async function takeMail(sessionId) {
+  if (!fs.existsSync(path.join(paths.mail, encodeURIComponent(sessionId ?? "")))) return null;
+  return (await ask({ op: "take_mail", session_id: sessionId }))?.text ?? null;
 }
 
+// A timer on this thread never fires while the classifier holds it, so the limit has to interrupt from outside. Anything
+// that stops it finishing could be hiding what it would have found, which is why the warning sends it to the person.
 function verdictFor(input) {
-  const ctx = { home: homedir(), cwd: input.cwd ?? process.cwd(), stateDir: paths.dir, configDir: process.env.CLAUDE_CONFIG_DIR };
-  let verdict;
+  const ctx = { home: homedir(), cwd: input.cwd ?? process.cwd(), stateDir: paths.dir, configDir: process.env.CLAUDE_CONFIG_DIR || undefined };
   try {
-    verdict = classifyToolCall(input.tool_name, input.tool_input ?? {}, ctx);
+    return vm.runInNewContext("read()", { read: () => classifyToolCall(input.tool_name, input.tool_input ?? {}, ctx) }, { timeout: READ_LIMIT_MS });
   } catch (error) {
-    verdict = { risk: "opaque", why: [`could not read this command: ${error.message}`] };
+    const unread = error.code === "ERR_SCRIPT_EXECUTION_TIMEOUT" ? "ran out of time" : `failed: ${error.message}`;
+    return { risk: "opaque", why: [`sayso could not read this command: ${unread}`], warnings: ["sayso could not finish reading this"] };
   }
-  if (verdict && input.tool_name === "Bash") {
-    if (verdict.risk !== "catastrophic" && verdict.risk !== "self" && matchesPassRule(input.tool_input?.command, loadPolicy(paths.policy).pass)) return null;
-  }
-  return verdict;
+}
+
+// The daemon holds the policy and the log, so a pass rule only counts once the daemon has checked it and written it down.
+async function passedByRule(input, verdict) {
+  if (input.tool_name !== "Bash" || verdict.risk === "catastrophic" || verdict.risk === "self") return false;
+  const reply = await ask({ op: "pass", session_id: input.session_id, risk: verdict.risk, tool: input.tool_name, input: input.tool_input, dialog: input.hook_event_name !== "PreToolUse" }, ASK_LIMIT_MS);
+  return reply?.pass === true;
 }
 
 const failClosed = (why) => `sayso: blocked because ${why}. Nothing ran. The person can check with \`sayso doctor\`.`;
 
 async function gate(input) {
-  const verdict = verdictFor(input);
+  let verdict = verdictFor(input);
+  if (verdict && (await passedByRule(input, verdict))) verdict = null;
   const tool = input.tool_name;
 
   if (input.hook_event_name === "PreToolUse") {
@@ -169,7 +181,7 @@ async function gate(input) {
     const attended = isAttended();
     // At a terminal, "ask" puts the real dialog on screen and fires PermissionRequest, where the same hold races it.
     if (attended) preToolUse("ask", `sayso: ${verdict.why[0] ?? verdict.risk}. Answer here, or your agent can get your say-so.`, context);
-    const answer = await holdAtDaemon({ ...sessionFields(input), attended, kind: "tool", risk: verdict.risk, why: verdict.why, tool, input: input.tool_input });
+    const answer = await holdAtDaemon({ ...sessionFields(input), attended, kind: "tool", risk: verdict.risk, why: verdict.why, warnings: verdict.warnings, tool, input: input.tool_input });
     if (answer.decision === "allow") preToolUse("allow", answer.reason ?? "sayso: approved", context);
     preToolUse("deny", answer.failure ? failClosed(answer.failure) : (answer.reason ?? "sayso: denied"), context);
   }
@@ -177,7 +189,7 @@ async function gate(input) {
   // PermissionRequest: the dialog is on screen while this waits, and whichever answer comes first wins.
   const kind = tool === "AskUserQuestion" ? "question" : tool === "ExitPlanMode" ? "plan" : verdict ? "tool" : "prompt";
   const risk = kind === "question" ? "question" : kind === "plan" ? "plan" : (verdict?.risk ?? "prompt");
-  const answer = await holdAtDaemon({ ...sessionFields(input), attended: isAttended(), dialog: true, kind, risk, why: verdict?.why ?? [], tool, input: input.tool_input });
+  const answer = await holdAtDaemon({ ...sessionFields(input), attended: isAttended(), dialog: true, kind, risk, why: verdict?.why ?? [], warnings: verdict?.warnings, tool, input: input.tool_input });
   if (answer.decision === "closed") process.exit(0);
   if (answer.decision === "allow") permissionRequest({ behavior: "allow" });
   if (answer.decision === "answer") permissionRequest({ behavior: "allow", updatedInput: answer.updatedInput });
@@ -188,6 +200,7 @@ async function gate(input) {
 }
 
 async function reportEvent(input) {
+  setTimeout(() => process.exit(0), 5000);
   const socket = await connect(input.hook_event_name === "SessionStart" ? 1500 : 300);
   socket.on("error", () => process.exit(0));
   socket.end(

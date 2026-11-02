@@ -67,6 +67,7 @@ export class Rig {
     return {
       PATH: process.env.PATH,
       HOME: this.fakeHome,
+      SAYSO_NODE: process.execPath,
       TMPDIR: process.env.TMPDIR,
       SAYSO_HOME: this.home,
       SAYSO_PORT: String(this.port),
@@ -105,9 +106,9 @@ export class Rig {
     return this;
   }
 
-  askDaemon(message) {
+  askDaemon(message, door = "owner.sock") {
     return new Promise((resolve, reject) => {
-      const socket = net.connect(path.join(this.home, "sayso.sock"));
+      const socket = net.connect(path.join(this.home, door));
       let buffer = "";
       socket.setEncoding("utf8");
       socket.on("data", (d) => (buffer += d));

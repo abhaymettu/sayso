@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// The daemon. Two doors with different powers: a Unix socket for hooks, which can open requests but never answer them,
-// and an authenticated loopback HTTP port for agents, which can answer but never open them.
+// The daemon. Three doors with different powers: a Unix socket for hooks, which can open requests but never answer them,
+// an authenticated loopback HTTP port for agents, which can answer but never open them, and a second socket for the
+// owner's CLI, which can deny, look and stop the daemon. Node shows no peer credentials on a socket, so the file mode is the check.
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -38,9 +39,13 @@ export function loadConfig(paths) {
 
 const sha256 = (text) => crypto.createHash("sha256").update(text).digest("hex");
 
-function authenticate(req, agents) {
+const bearer = (req) => {
   const header = req.headers.authorization ?? "";
-  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+};
+
+function authenticate(req, agents) {
+  const token = bearer(req);
   if (!token) return null;
   const digest = Buffer.from(sha256(token));
   for (const agent of agents) {
@@ -103,7 +108,8 @@ function pushToSinks(event, sinks, log) {
         signal: AbortSignal.timeout(5000),
       }).catch((error) => log(`webhook failed: ${error.message}`));
     } else if (sink.type === "command") {
-      const child = spawn(sink.argv[0], sink.argv.slice(1), { stdio: ["pipe", "ignore", "ignore"] });
+      // A daemon started by a hook has the hook's clean environment, so a sink keeps the PATH it was added with.
+      const child = spawn(sink.argv[0], sink.argv.slice(1), { stdio: ["pipe", "ignore", "ignore"], env: sink.path ? { ...process.env, PATH: sink.path } : process.env });
       child.on("error", (error) => log(`notify command failed: ${error.message}`));
       child.stdin.on("error", () => {});
       child.stdin.end(body);
@@ -120,7 +126,7 @@ export async function startDaemon(paths = statePaths()) {
   const log = (line) => fs.appendFileSync(paths.log, `${new Date().toISOString()} ${line}\n`, { mode: 0o600 });
   let config = loadConfig(paths);
   const waiters = new Set();
-  const streams = new Set();
+  const streams = new Map();
   const wakers = new Map();
 
   const box = createBox({
@@ -133,19 +139,24 @@ export async function startDaemon(paths = statePaths()) {
       pushToSinks(event, config.notify, log);
       for (const wake of [...waiters]) wake();
       const line = `id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-      for (const res of streams) res.write(line);
+      for (const res of streams.keys()) res.write(line);
     },
   });
+
+  const tokenValid = (digest) => box.agents.some((a) => a.token_sha256 === digest && !a.revoked);
 
   const reload = () => {
     config = loadConfig(paths);
     box.setConfig({ policy: loadPolicy(paths.policy), agents: readJson(paths.agents, []), keys: readJson(paths.keys, []) });
+    for (const [res, digest] of streams) if (!tokenValid(digest)) res.end();
+    for (const wake of [...waiters]) wake();
   };
 
-  function waitForEvents({ cursor, timeout_seconds = 30, all = false }) {
+  function waitForEvents({ cursor, timeout_seconds = 30, all = false }, digest) {
     const fresh = cursor === undefined;
     const since = cursor ?? 0;
     const collect = () => {
+      if (!tokenValid(digest)) return [];
       const events = box.eventsSince(since, !all);
       // A first call asks "what needs me now", so resolved history is dropped and only open requests come back.
       return fresh ? events.filter((e) => e.type === "request.opened" && box.getRequest(e.request_id)?.status === "pending") : events;
@@ -160,7 +171,7 @@ export async function startDaemon(paths = statePaths()) {
         resolve({ events, cursor: box.seq });
       };
       const check = () => {
-        if (collect().length) finish();
+        if (collect().length || !tokenValid(digest)) finish();
       };
       const timer = setTimeout(finish, Math.min(timeout_seconds, 300) * 1000);
       waiters.add(check);
@@ -186,7 +197,7 @@ export async function startDaemon(paths = statePaths()) {
     return { status: "queued", via: "next tool call" };
   }
 
-  const toolContext = { waitForEvents, sendMessage };
+  const toolContext = (req) => ({ waitForEvents: (args) => waitForEvents(args, sha256(bearer(req))), sendMessage });
 
   // ---- hook door ----
   function handleHook(conn, message) {
@@ -230,6 +241,17 @@ export async function startDaemon(paths = statePaths()) {
         conn.end(`${JSON.stringify({ text })}\n`);
         return;
       }
+      case "pass":
+        conn.end(`${JSON.stringify(box.passRule(message))}\n`);
+        return;
+      default:
+        conn.end(`${JSON.stringify({ error: "unknown op" })}\n`);
+    }
+  }
+
+  // ---- owner door ----
+  function handleOwner(conn, message) {
+    switch (message.op) {
       case "status":
         conn.end(`${JSON.stringify({ pid: process.pid, port: config.port, sessions: box.listSessions(), requests: box.listRequests(), policy: box.policy, agents: box.agents.map((a) => a.name), keys: box.keys.map((k) => ({ id: k.id, name: k.name })) })}\n`);
         return;
@@ -249,26 +271,29 @@ export async function startDaemon(paths = statePaths()) {
     }
   }
 
-  const hookServer = net.createServer((conn) => {
-    let buffer = "";
-    let handled = false;
-    conn.setEncoding("utf8");
-    conn.on("error", () => {});
-    conn.on("data", (chunk) => {
-      if (handled) return;
-      buffer += chunk;
-      if (buffer.length > 2 * 1024 * 1024) return conn.destroy();
-      const end = buffer.indexOf("\n");
-      if (end < 0) return;
-      handled = true;
-      try {
-        handleHook(conn, JSON.parse(buffer.slice(0, end)));
-      } catch (error) {
-        log(`hook door: ${error.message}`);
-        conn.destroy();
-      }
+  const lineServer = (handle) =>
+    net.createServer((conn) => {
+      let buffer = "";
+      let handled = false;
+      conn.setEncoding("utf8");
+      conn.on("error", () => {});
+      conn.on("data", (chunk) => {
+        if (handled) return;
+        buffer += chunk;
+        if (buffer.length > 2 * 1024 * 1024) return conn.destroy();
+        const end = buffer.indexOf("\n");
+        if (end < 0) return;
+        handled = true;
+        try {
+          handle(conn, JSON.parse(buffer.slice(0, end)));
+        } catch (error) {
+          log(`socket door: ${error.message}`);
+          conn.destroy();
+        }
+      });
     });
-  });
+  const hookServer = lineServer(handleHook);
+  const ownerServer = lineServer(handleOwner);
 
   // ---- agent door ----
   async function handleMcp(req, res, actor) {
@@ -298,7 +323,7 @@ export async function startDaemon(paths = statePaths()) {
         case "tools/call": {
           const tool = TOOL_BY_NAME.get(msg.params?.name);
           if (!tool) return fail(-32602, `unknown tool ${msg.params?.name}`);
-          const result = await tool.run(box, actor, msg.params?.arguments ?? {}, toolContext);
+          const result = await tool.run(box, actor, msg.params?.arguments ?? {}, toolContext(req));
           return reply({ content: [{ type: "text", text: JSON.stringify(result, null, 1) }], structuredContent: result, isError: result?.status === "not_found" });
         }
         default:
@@ -318,7 +343,7 @@ export async function startDaemon(paths = statePaths()) {
     const from = Number(req.headers["last-event-id"] ?? new URL(req.url, "http://x").searchParams.get("since") ?? box.seq);
     for (const event of box.eventsSince(from, false)) res.write(`id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     res.write(": connected\n\n");
-    streams.add(res);
+    streams.set(res, sha256(bearer(req)));
     const heartbeat = setInterval(() => res.write(": ping\n\n"), 15000);
     req.on("close", () => {
       clearInterval(heartbeat);
@@ -345,7 +370,7 @@ export async function startDaemon(paths = statePaths()) {
         const tool = TOOL_BY_NAME.get(call[1]);
         if (!tool) return sendJson(res, 404, { error: "unknown tool" });
         const raw = await readBody(req);
-        return sendJson(res, 200, await tool.run(box, actor, raw ? JSON.parse(raw) : {}, toolContext));
+        return sendJson(res, 200, await tool.run(box, actor, raw ? JSON.parse(raw) : {}, toolContext(req)));
       }
       if (url.pathname === "/v1/tools" && req.method === "GET") return sendJson(res, 200, { tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })), instructions: INSTRUCTIONS });
       return sendJson(res, 404, { error: "not found" });
@@ -379,6 +404,17 @@ export async function startDaemon(paths = statePaths()) {
       bind();
     });
   });
+  await new Promise((resolve, reject) => {
+    ownerServer.once("error", reject);
+    fs.rmSync(paths.ownerSock, { force: true });
+    // The umask closes the moment between bind and chmod. Only this user, or root, can connect.
+    const umask = process.umask(0o177);
+    ownerServer.listen(paths.ownerSock, () => {
+      process.umask(umask);
+      fs.chmodSync(paths.ownerSock, 0o600);
+      resolve();
+    });
+  });
 
   fs.writeFileSync(paths.pid, String(process.pid), { mode: 0o600 });
   log(`started pid ${process.pid} port ${httpServer.address().port}`);
@@ -390,6 +426,7 @@ export async function startDaemon(paths = statePaths()) {
 
   const shutdown = () => {
     fs.rmSync(paths.sock, { force: true });
+    fs.rmSync(paths.ownerSock, { force: true });
     fs.rmSync(paths.pid, { force: true });
     process.exit(0);
   };

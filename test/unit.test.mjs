@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
+import { MAX_HOLD_SECONDS } from "../src/paths.mjs";
 import { openAudit, verifyAudit } from "../src/audit.mjs";
 import { matchesPassRule, normalizePolicy, PRESETS } from "../src/policy.mjs";
 import { faithful, forDisplay, redact } from "../src/redact.mjs";
@@ -136,6 +137,17 @@ describe("policy", () => {
     assert.equal(p.approver.self, "human");
     assert.equal(p.approver.destructive, "agent");
     assert.equal(p.notes.length, 2);
+  });
+  test("the wrapper's deadline sits between the longest hold and the hook timeout", () => {
+    const root = new URL("..", import.meta.url);
+    const limit = Number(/SAYSO_GATE_LIMIT:-(\d+)/.exec(fs.readFileSync(new URL("hooks/run.sh", root), "utf8"))[1]);
+    const table = JSON.parse(fs.readFileSync(new URL("hooks/hooks.json", root), "utf8")).hooks;
+    assert.ok(limit > MAX_HOLD_SECONDS + 30);
+    for (const event of ["PreToolUse", "PermissionRequest"]) {
+      assert.ok(limit < table[event][0].hooks[0].timeout);
+      assert.equal(table[event][0].hooks[0].onFailure, "block");
+    }
+    for (const group of Object.values(table).flat()) for (const hook of group.hooks) assert.match(hook.command, /^\/usr\/bin\/env -i PATH=\/usr\/bin:\/bin:\/usr\/sbin:\/sbin .*\/bin\/sh /);
   });
   test("hold time stays under the hook timeout", () => {
     assert.equal(normalizePolicy({ hold_seconds: 99999 }).hold_seconds, 3000);

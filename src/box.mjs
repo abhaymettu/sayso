@@ -1,8 +1,11 @@
 // The daemon's state and every rule about who may decide what. No sockets here, so each rule is testable directly.
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
+import vm from "node:vm";
 import { openAudit } from "./audit.mjs";
-import { forDisplay, redact } from "./redact.mjs";
+import { matchesPassRule } from "./policy.mjs";
+import { faithful, forDisplay, redact } from "./redact.mjs";
 import { encodeDoc, verifyApproval } from "./sign.mjs";
 
 /** @typedef {"pending"|"approved"|"denied"|"answered"|"expired"|"cancelled"} RequestStatus */
@@ -11,6 +14,9 @@ import { encodeDoc, verifyApproval } from "./sign.mjs";
 const MAX_BAD_SIGNATURES = 3;
 const MAX_EVENTS = 2000;
 const MAX_PENDING_PER_SESSION = 8;
+const MAX_PENDING = 64;
+const TEXT_LIMIT_MS = 2000;
+const REDACTED = "part of this is hidden as a possible secret, and the hidden part could be a command or a path";
 
 const SESSION_STATE = {
   SessionStart: "idle",
@@ -31,21 +37,58 @@ const NOTIFICATION_STATE = {
 const ATTENTION = new Set(["request.opened", "session.waiting", "session.failed"]);
 
 const shortId = () => crypto.randomBytes(6).toString("base64url").replace(/[-_]/g, "x");
-const clip = (text, limit = 2000) => forDisplay(text, limit).text;
 
-// Which simple field of a tool call a person should read to know what it does.
+const within = (run, ms = TEXT_LIMIT_MS) => vm.runInNewContext("run()", { run }, { timeout: ms });
+
+function look(text, limit) {
+  const display = forDisplay(text, limit);
+  return redact(text) === String(text ?? "") ? display : { ...display, warnings: [...display.warnings, REDACTED] };
+}
+
+// One thread serves every session, so text a session chose must not be able to stall it. Too slow to check for secrets
+// means it is not shown at all, never that it is shown raw.
+function shown(text, limit = 2000) {
+  if (String(text ?? "").length < 1024) return look(text, limit);
+  try {
+    return within(() => look(text, limit));
+  } catch {
+    return { text: "⟦not shown: it took too long to check for secrets⟧", warnings: ["could not be shown"], truncated: true };
+  }
+}
+
+const clip = (text, limit = 2000) => shown(text, limit).text;
+
+// What a person reads before signing. Only an input with nothing but these fields gets the readable form. Anything else is
+// JSON, so a session can't pick a harmless field to show and keep the real one out of sight. A Bash description and timeout
+// change nothing that runs.
 function summarizeInput(tool, input) {
   if (!input || typeof input !== "object") return "";
-  if (typeof input.command === "string") return input.command;
-  if (typeof input.file_path === "string") {
-    if (typeof input.content === "string") return `${input.file_path}\n\n${input.content}`;
-    if (typeof input.new_string === "string") return `${input.file_path}\n\nreplace:\n${input.old_string}\n\nwith:\n${input.new_string}`;
-    return input.edits ? `${input.file_path}\n\n${JSON.stringify(input.edits)}` : input.file_path;
+  const only = (...names) => Object.keys(input).every((field) => names.includes(field));
+  if (tool === "Bash" && typeof input.command === "string" && only("command", "description", "timeout")) return input.command;
+  if (tool === "Write" && typeof input.file_path === "string" && typeof input.content === "string" && only("file_path", "content")) return `${input.file_path}\n\n${input.content}`;
+  if (tool === "ExitPlanMode" && typeof input.plan === "string" && only("plan")) return input.plan;
+  return JSON.stringify(input, null, 1);
+}
+
+// JSON escapes control characters into plain text, so hidden characters are looked for in the values themselves.
+function hiddenInFields(input) {
+  const warnings = new Set();
+  JSON.stringify(input ?? null, (key, value) => {
+    for (const text of [key, value]) if (typeof text === "string") for (const warning of faithful(text).warnings) warnings.add(warning);
+    return value;
+  });
+  return warnings;
+}
+
+// Keys the hashes in the audit log. A plain hash of a redacted input cracks with a wordlist.
+function auditKey(file) {
+  try {
+    return fs.readFileSync(file);
+  } catch {
+    const key = crypto.randomBytes(32);
+    fs.writeFileSync(file, key, { mode: 0o600 });
+    return key;
   }
-  if (typeof input.notebook_path === "string") return `${input.notebook_path}\n\n${input.new_source ?? ""}`.trimEnd();
-  if (typeof input.plan === "string") return input.plan;
-  if (typeof input.url === "string") return input.url;
-  return JSON.stringify(input);
 }
 
 export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEvent = () => {}, now = () => Date.now() }) {
@@ -54,6 +97,8 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
   const requests = new Map();
   const events = [];
   const audit = openAudit(paths.audit);
+  const hashKey = auditKey(`${paths.audit}.key`);
+  const inputHmac = (input) => crypto.createHmac("sha256", hashKey).update(JSON.stringify(input ?? null)).digest("hex");
   let seq = 0;
 
   function emit(type, fields) {
@@ -64,14 +109,14 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     return event;
   }
 
-  const sessionName = (s) => (s?.cwd ? path.basename(s.cwd) : "unknown");
+  const sessionName = (s) => (s?.cwd ? clip(path.basename(s.cwd), 120) : "unknown");
 
   function touchSession(id, fields) {
     let s = sessions.get(id);
     if (!s) {
       s = { session_id: id, state: "idle", started_at: new Date(now()).toISOString(), last_message: null };
       sessions.set(id, s);
-      emit("session.started", { session_id: id, session: sessionName(fields) });
+      emit("session.started", { session_id: id, untrusted: { session: sessionName(fields) } });
     }
     Object.assign(s, fields);
     return s;
@@ -80,10 +125,11 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
   function setState(s, next, extra = {}) {
     if (s.state === next) return;
     s.state = next;
-    if (next === "waiting") emit("session.waiting", { session_id: s.session_id, session: sessionName(s), untrusted: { last_message: s.last_message }, ...extra });
-    else if (next === "failed") emit("session.failed", { session_id: s.session_id, session: sessionName(s), ...extra });
-    else if (next === "ended") emit("session.ended", { session_id: s.session_id, session: sessionName(s) });
-    else emit("session.state", { session_id: s.session_id, session: sessionName(s), state: next });
+    const untrusted = { session: sessionName(s) };
+    if (next === "waiting") emit("session.waiting", { session_id: s.session_id, untrusted: { ...untrusted, last_message: s.last_message }, ...extra });
+    else if (next === "failed") emit("session.failed", { session_id: s.session_id, untrusted, ...extra });
+    else if (next === "ended") emit("session.ended", { session_id: s.session_id, untrusted });
+    else emit("session.state", { session_id: s.session_id, untrusted, state: next });
   }
 
   // Hook reports run as separate processes and can arrive out of order, so each carries the time it started.
@@ -112,7 +158,7 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
   // answered question comes back with its answers added to the input, so a question matches on the tool alone.
   function closeAnsweredDialog({ session_id, tool_name, input_sha256 }) {
     const held = [...requests.values()].find((r) => r.dialog && r.status === "pending" && r.session_id === session_id && r.tool === tool_name && (r.kind === "question" || r.input_sha256 === input_sha256));
-    if (held) settle(held, "cancelled", { type: "session", name: "answered at the terminal" }, { decision: "closed" });
+    if (held) settle(held, "cancelled", { type: "session", name: "the session reports it finished" }, { decision: "closed" });
   }
 
   function checkLiveness(isAlive) {
@@ -128,14 +174,35 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     }));
   }
 
-  function openRequest({ session_id, cwd, kind, risk, why, tool, input, permission_mode, attended, dialog, pid, entrypoint, onDecision }) {
+  function refuseRequest({ session_id, tool, risk, input, onDecision }, name, reason) {
+    audit.append({ session: session_id, tool, risk, input_hmac: inputHmac(input), decision: "denied", actor: { type: "system", name } });
+    return onDecision({ decision: "deny", reason });
+  }
+
+  // A pass rule lets a flagged call run with nobody asked, so this is the only record that it did. A dialog that comes
+  // after a passed call runs nothing by itself, so it asks without logging.
+  function passRule({ session_id, tool, risk, input, dialog }) {
+    if (tool !== "Bash" || risk === "catastrophic" || risk === "self") return { pass: false };
+    let pass = false;
+    try {
+      pass = within(() => matchesPassRule(input?.command, state.policy.pass));
+    } catch {}
+    if (pass && !dialog) audit.append({ session: session_id, tool, risk, input_hmac: inputHmac(input), decision: "passed", actor: { type: "policy", name: "pass rule" } });
+    return { pass };
+  }
+
+  function openRequest({ session_id, cwd, kind, risk, why, warnings, tool, input, permission_mode, attended, dialog, pid, entrypoint, onDecision }) {
+    const pending = [...requests.values()].filter((r) => r.status === "pending");
+    const refused = { session_id, tool, risk, input, onDecision };
+    if (pending.length >= MAX_PENDING) return refuseRequest(refused, "too many requests pending", "too many requests pending");
+    if (pending.filter((r) => r.session_id === session_id).length >= MAX_PENDING_PER_SESSION) return refuseRequest(refused, "too many requests pending for this session", "too many requests pending for this session");
     const s = touchSession(session_id, { cwd, permission_mode, attended, pid, entrypoint });
-    const pendingHere = [...requests.values()].filter((r) => r.session_id === session_id && r.status === "pending").length;
-    if (pendingHere >= MAX_PENDING_PER_SESSION) return onDecision({ decision: "deny", reason: "too many requests pending for this session" });
 
     const hold = state.policy.hold_seconds;
     const created = now();
-    const display = forDisplay(summarizeInput(tool, input));
+    const display = shown(summarizeInput(tool, input));
+    const raised = Array.isArray(warnings) ? warnings.map((w) => clip(w, 200)) : [];
+    display.warnings = [...new Set([...display.warnings, ...hiddenInFields(input), ...raised])];
     const request = {
       id: `r_${shortId()}`,
       nonce: crypto.randomBytes(9).toString("base64url"),
@@ -145,12 +212,14 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
       kind,
       dialog: !!dialog,
       risk,
-      why: why ?? [],
+      why: Array.isArray(why) ? why.map((w) => clip(w, 300)) : [],
       tool,
       display,
       questions: kind === "question" ? questionsOf(input) : undefined,
       raw_input: input,
+      // Only to match the session's own report of this call. It never leaves the daemon, so it needs no key.
       input_sha256: crypto.createHash("sha256").update(JSON.stringify(input ?? null)).digest("hex"),
+      input_hmac: inputHmac(input),
       approver: kind === "question" ? "agent" : (state.policy.approver[risk] ?? "human"),
       status: "pending",
       created_at: new Date(created).toISOString(),
@@ -159,12 +228,11 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
       bad_signatures: 0,
       onDecision,
     };
-    if (display.truncated || (request.risk !== "prompt" && kind !== "question" && display.warnings.length)) request.approver = "human";
+    if (display.truncated || (kind !== "question" && display.warnings.length)) request.approver = "human";
 
     // Nobody registered, nobody to ask. A headless run should find out now, not after the full hold.
     if (!state.agents.length && !attended) {
-      audit.append({ request: request.id, session: session_id, tool, risk, input_sha256: request.input_sha256, decision: "denied", actor: { type: "system", name: "no agent registered" } });
-      return onDecision({ decision: "deny", reason: "sayso: this needs an answer and no agent is connected, so it was not run." });
+      return refuseRequest(refused, "no agent registered", "sayso: this needs an answer and no agent is connected, so it was not run.");
     }
 
     request.doc = encodeDoc({
@@ -180,16 +248,15 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
       display: display.text,
       warnings: display.warnings,
       expires_at: request.expires_at,
-      input_sha256: request.input_sha256,
     });
     requests.set(request.id, request);
     if (s.state !== "ended") setState(s, "needs_input");
-    audit.append({ request: request.id, session: session_id, tool, risk, approver: request.approver, input_sha256: request.input_sha256, decision: "opened" });
-    emit("request.opened", { session_id, session: request.session, request_id: request.id, kind, risk, approver: request.approver, tool, untrusted: untrustedOf(request) });
+    audit.append({ request: request.id, session: session_id, tool, risk, approver: request.approver, input_hmac: request.input_hmac, decision: "opened" });
+    emit("request.opened", { session_id, request_id: request.id, kind, risk, approver: request.approver, tool, untrusted: untrustedOf(request) });
     return request;
   }
 
-  const untrustedOf = (r) => ({ action: r.display.text, questions: r.questions, why: r.why, warnings: r.display.warnings });
+  const untrustedOf = (r) => ({ session: r.session, action: r.display.text, questions: r.questions, why: r.why, warnings: r.display.warnings });
 
   function approvalUrl(r) {
     return `${pageUrl}#r=${r.doc}`;
@@ -199,7 +266,6 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     return {
       id: r.id,
       session_id: r.session_id,
-      session: r.session,
       kind: r.kind,
       risk: r.risk,
       tool: r.tool,
@@ -217,12 +283,12 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     r.status = status;
     r.decided_by = actor;
     r.decided_at = new Date(now()).toISOString();
-    audit.append({ request: r.id, session: r.session_id, tool: r.tool, risk: r.risk, input_sha256: r.input_sha256, decision: status, actor, ...extra });
+    audit.append({ request: r.id, session: r.session_id, tool: r.tool, risk: r.risk, input_hmac: r.input_hmac, decision: status, actor, ...extra });
     r.onDecision?.(decision);
     delete r.raw_input;
     const s = sessions.get(r.session_id);
     if (s && s.state === "needs_input" && ![...requests.values()].some((o) => o.session_id === r.session_id && o.status === "pending")) setState(s, "working");
-    emit("request.resolved", { session_id: r.session_id, session: r.session, request_id: r.id, status, decided_by: actor });
+    emit("request.resolved", { session_id: r.session_id, untrusted: { session: r.session }, request_id: r.id, status, decided_by: actor });
   }
 
   function pendingRequest(id) {
@@ -241,7 +307,7 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
     if (error) return error;
     // The session's model reads this. Under a policy with messages off, an injected agent must not be able to speak to it here.
     const said = reason && state.policy.messages ? ` (${clip(reason, 200)})` : "";
-    settle(r, "denied", actor, { decision: "deny", reason: `sayso: denied by ${actor.name}${said}. Do not try an equivalent command. Tell the user what you wanted to do.` }, reason ? { reason: redact(reason).slice(0, 200) } : {});
+    settle(r, "denied", actor, { decision: "deny", reason: `sayso: denied by ${actor.name}${said}. Do not try an equivalent command. Tell the user what you wanted to do.` }, reason ? { reason: clip(reason, 200) } : {});
     return { status: "denied", request: view(r) };
   }
 
@@ -327,6 +393,7 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
 
   return {
     report,
+    passRule,
     openRequest,
     deny,
     approve,
@@ -358,15 +425,13 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
         .filter((s) => includeEnded || s.state !== "ended")
         .map((s) => ({
           session_id: s.session_id,
-          name: sessionName(s),
-          cwd: s.cwd,
           state: s.state,
           permission_mode: s.permission_mode,
           attended: s.attended,
           started_at: s.started_at,
           last_event_at: s.last_event_at,
           pending_requests: [...requests.values()].filter((r) => r.session_id === s.session_id && r.status === "pending").map((r) => r.id),
-          untrusted: { last_message: s.last_message },
+          untrusted: { name: sessionName(s), cwd: clip(s.cwd ?? "", 300), last_message: s.last_message },
         })),
     listRequests: (status = "pending") => [...requests.values()].filter((r) => status === "all" || r.status === status).map(view),
     getRequest: (id) => {
