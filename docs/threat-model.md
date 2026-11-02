@@ -1,8 +1,8 @@
 # Threat model
 
 sayso is a remote control for shell commands, so a wrong yes destroys data. This page says what it defends against, how,
-and where it stops. Every "fails" below is a test in `test/attacks.test.mjs` or `test/live.mjs` that runs against a real
-install and a real Claude Code binary.
+and where it stops. Every "fails" below is a test in `test/attacks.test.mjs`, `test/e2e.test.mjs` or `test/live.mjs` that
+runs against a real install and a real Claude Code binary.
 
 ## What it protects
 
@@ -40,7 +40,7 @@ A session reads repositories and web pages too, and in bypass mode it can run an
 |---|---|
 | It reads every file in the state folder looking for a way to say yes | There is none. No private key and no agent token is stored, only public keys and token hashes. |
 | It talks to the hook socket and sends `approve` | That door has no such verb. It can open requests and report events, never answer them. |
-| It curls the agent port, or reads, edits or kills sayso | The call is classified `self`, and that always needs you. |
+| It curls the agent port, or reads, edits or kills sayso by name | The call is classified `self`, and that always needs you. A broad `pkill node` isn't caught, but a dead daemon denies. |
 | It runs `sayso policy trusted-agent` | Classified `self`, and the CLI refuses when the session's variables are set or a `claude` process is among its ancestors. |
 | It hides the danger with escape codes, bidi overrides, zero-width or tag characters, or hundreds of spaces | They are shown as visible marks, a warning is raised, and the request goes to you whatever the policy says. |
 | It floods the queue | Eight pending requests per session, then the next is denied. |
@@ -94,15 +94,14 @@ slip through into what your agent sees.
 | Nobody answers | Denied when the hold ends, 15 minutes by default |
 | The daemon dies during a hold | Denied at once |
 | The daemon cannot start | Denied |
-| The gate process crashes or is killed | Blocked by `hooks/run.sh` |
+| The gate process crashes or is killed | Blocked by `onFailure: "block"` and by `hooks/run.sh` |
 | Node is missing | Blocked by `hooks/run.sh` |
 | The policy file is broken | Strict |
 | The laptop sleeps through a hold | Denied on wake, because the deadline is wall clock |
 | No agent is registered, in a headless run | Denied at once |
 
-One gap is outside this list. Claude Code runs the tool if the hook process is killed, and only `hooks/run.sh` turns that
-into a block. A process that kills `run.sh` itself, while the call is held, gets the tool run. That needs a hostile process
-already running as you, aiming at a process it can find.
+Killing `run.sh` itself during a hold used to be a way through. `onFailure: "block"` closes it on Claude Code versions that
+know the field, and `test/attacks.test.mjs` kills the wrapper to check. On an older version the gap is still there.
 
 ## What you are trusting
 
@@ -112,6 +111,11 @@ already running as you, aiming at a process it can find.
   origin, so any script on any page of that origin could ask your stored key for a signature, and a service worker at
   the root could change what the page shows. So you are also trusting everything that account publishes to Pages. To
   take that out, serve `docs/` from an origin of your own and run `sayso pair --page https://your-host/`.
+- **The moment of pairing.** `sayso pair` makes the key on your computer and hands it to your phone inside the QR code.
+  The computer keeps only the public half and clears the screen and scrollback afterwards, but a process watching that
+  terminal while the code is up could copy it. Pair with nothing else running if that worries you.
+- **What your agent can reach.** Your agent can't make a code through sayso's tools. If it can also drive a browser on your
+  paired device, it can hold the button itself, because approving takes no biometric. Don't give it that.
 - **Your device's browser storage.** The key is stored non-extractable, so page code cannot read it out, though it could
   ask for signatures. Safari may clear site data after a week without visits, and then you pair again.
 - **Claude Code's hook contract.** Hooks can skip under `--bare`, `--safe-mode` and `disableAllHooks` unless they are

@@ -12,7 +12,7 @@ const CLAUDE = process.env.CLAUDE_BIN || "claude";
 const MODES = ["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"];
 const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "PostToolUseFailure", "Notification", "Stop", "StopFailure", "SessionEnd"];
 
-function sandbox(hookForEvent, hookTimeout) {
+function sandbox(hookForEvent, hookTimeout, onFailure) {
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "probe-"));
   const config = path.join(root, "config");
   const cwd = path.join(root, "work");
@@ -28,7 +28,7 @@ function sandbox(hookForEvent, hookTimeout) {
     for (const [event, script] of Object.entries(hookForEvent)) {
       const file = path.join(root, `${event}.sh`);
       fs.writeFileSync(file, `#!/bin/sh\n${script}\n`, { mode: 0o755 });
-      hooks[event] = [...(hooks[event] || []), { hooks: [{ type: "command", command: file, ...(hookTimeout ? { timeout: hookTimeout } : {}) }] }];
+      hooks[event] = [...(hooks[event] || []), { hooks: [{ type: "command", command: file, ...(hookTimeout ? { timeout: hookTimeout } : {}), ...(onFailure ? { onFailure } : {}) }] }];
     }
   }
   fs.writeFileSync(path.join(config, "settings.json"), JSON.stringify({ hooks }, null, 2));
@@ -49,8 +49,8 @@ function cleanEnv(box, baseUrl) {
   };
 }
 
-async function run({ mode, hookForEvent, hookTimeout, plan, killHookAfterMs, deadlineMs = 90000 }) {
-  const box = sandbox(hookForEvent, hookTimeout);
+async function run({ mode, hookForEvent, hookTimeout, onFailure, plan, killHookAfterMs, deadlineMs = 90000 }) {
+  const box = sandbox(hookForEvent, hookTimeout, onFailure);
   const steps = plan?.(box) ?? [{ tool: "Bash", input: { command: "rm -rf victim", description: "delete" } }, { text: "finished" }];
   const model = await startScriptedModel(steps);
   const args = ["-p", "go", "--model", "claude-scripted", "--output-format", "json", "--permission-mode", mode];
@@ -106,6 +106,11 @@ const scenarios = {
   "PreToolUse: garbage stdout": { hookForEvent: { PreToolUse: `cat >/dev/null; echo '{not json'; exit 0` } },
   "PreToolUse: killed with SIGKILL mid-hold": { hookForEvent: { PreToolUse: `cat >/dev/null; sleep 30` }, killHookAfterMs: 4000 },
   "PreToolUse: exceeds its timeout (3s)": { hookForEvent: { PreToolUse: `cat >/dev/null; sleep 30` }, hookTimeout: 3 },
+  "onFailure block: exit 1": { hookForEvent: { PreToolUse: `cat >/dev/null; exit 1` }, onFailure: "block" },
+  "onFailure block: command not found": { hookForEvent: { PreToolUse: `cat >/dev/null; exec /nonexistent/runtime` }, onFailure: "block" },
+  "onFailure block: garbage stdout": { hookForEvent: { PreToolUse: `cat >/dev/null; echo '{not json'; exit 0` }, onFailure: "block" },
+  "onFailure block: killed with SIGKILL mid-hold": { hookForEvent: { PreToolUse: `cat >/dev/null; sleep 30` }, killHookAfterMs: 4000, onFailure: "block" },
+  "onFailure block: exceeds its timeout (3s)": { hookForEvent: { PreToolUse: `cat >/dev/null; sleep 30` }, hookTimeout: 3, onFailure: "block" },
   "PreToolUse: wrapper, exit 1 becomes exit 2": { hookForEvent: { PreToolUse: `cat >/dev/null; sh -c 'exit 1' || exit 2` } },
   "PreToolUse: wrapper, inner killed becomes exit 2": { hookForEvent: { PreToolUse: `cat >/dev/null; sleep 30 || exit 2` }, killInner: true },
 };

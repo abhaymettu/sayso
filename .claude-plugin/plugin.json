@@ -1,7 +1,7 @@
 {
   "name": "sayso",
   "version": "0.1.0",
-  "description": "Your agent can see your Claude Code sessions and answer them. Nothing destructive runs without your say-so, even with permissions bypassed.",
+  "description": "Your agent can see your Claude Code sessions and answer their questions. Commands that look destructive wait for a yes signed on your phone, even with permissions bypassed.",
   "author": { "name": "Abhay Mettu" },
   "repository": "https://github.com/abhaymettu/sayso",
   "license": "MIT",

@@ -19,32 +19,39 @@ So in bypass mode there is no prompt to answer. PreToolUse is the only place a c
 
 ## What blocks, and what does not
 
-A hook blocks only by saying so. Every failure of the hook itself lets the tool run.
+By default a hook blocks only by saying so, and a failure of the hook itself lets the tool run. Setting
+[`"onFailure": "block"`](https://code.claude.com/docs/en/hooks) on the hook changes most of that.
 
-| What the PreToolUse hook does | Result in bypass mode |
-|---|---|
-| Returns `permissionDecision: "deny"` | blocked, in all five modes |
-| Exits 2 | blocked |
-| Exits 1 | **`rm -rf` ran** |
-| Its command is not found | **`rm -rf` ran** |
-| Prints malformed JSON and exits 0 | **`rm -rf` ran** |
-| Killed with SIGKILL while holding | **`rm -rf` ran** |
-| Passes its `timeout` | **`rm -rf` ran** |
-| No `timeout` set, runs past 600 s | **`rm -rf` ran**, at 601 s |
-| `timeout: 3600`, holds 700 s, then answers | its answer is honoured at 701 s |
+| What the PreToolUse hook does | Result in bypass mode, default | With `onFailure: "block"` |
+|---|---|---|
+| Returns `permissionDecision: "deny"` | blocked, in all five modes | not rerun |
+| Exits 2 | blocked | not rerun |
+| Exits 1 | **`rm -rf` ran** | blocked |
+| Its command is not found | **`rm -rf` ran** | blocked |
+| Prints something that isn't JSON and exits 0 | **`rm -rf` ran** | **`rm -rf` ran** |
+| Killed with SIGKILL while holding | **`rm -rf` ran** | blocked |
+| Passes its `timeout` | **`rm -rf` ran** | blocked |
+| No `timeout` set, runs past 600 s | **`rm -rf` ran**, at 601 s | not rerun |
+| `timeout: 3600`, holds 700 s, then answers | its answer is honoured at 701 s | not rerun |
+
+`node test/probe-hooks.mjs --only=onFailure` reruns the last column. Claude Code's docs count invalid output as a failure,
+but plain text on stdout isn't one, so that row stays open.
 
 This is the trap for anything built on hooks. A guard that crashes, runs out of memory or loses its runtime turns off
 without a sound, and the thing it was guarding happens anyway.
 
-sayso's answer has three parts:
+sayso's answer has four parts:
 
-- `hooks/run.sh` wraps the gate in the one layer that needs no runtime, and turns every failure into exit 2.
+- The gate's hook entries set `onFailure: "block"`, so a kill or a timeout blocks the call on a Claude Code that knows the
+  field.
+- `hooks/run.sh` wraps the gate in the one layer that needs no runtime, and turns every failure into exit 2. This covers
+  older versions, and says what happened and how to fix it.
 - The hook timeout is 3600 s and holds are capped at 3000 s, so a hold always ends with an answer first.
 - Holds live on a connection. If the daemon dies, the connection closes and the hook denies.
 
-Killing the `sh` wrapper itself is the one gap left, and it takes a process deliberately aiming at it. A hardened
-install takes that process out of a session's reach only for the daemon, not the hook, so a hostile session with a
-parallel tool call could still try. See [the threat model](threat-model.md).
+Claude Code also refuses a few things on its own. `rmdir /` in bypass mode comes back with "Dangerous rmdir operation
+detected" and can't be auto-allowed, with no hook involved, and its docs name `rm -rf ~` as another case. So this table is
+about ordinary commands, and "a prompt never appears in bypass" has that small exception.
 
 ## What a person at a terminal sees
 

@@ -6,7 +6,8 @@ Run every command and check its output. Do not skip the verify step. Do not repo
 ## What you are installing
 
 A small local daemon and Claude Code hooks. After this, you can see your person's Claude Code sessions, get told when one
-needs something, and answer. Anything risky needs a signature from their own device, which you carry but cannot make.
+needs something, and answer its questions. Commands that look risky need a signature from their own device, which you carry
+but cannot make.
 
 ## 1. Check the machine
 
