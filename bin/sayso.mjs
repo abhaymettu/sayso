@@ -366,7 +366,17 @@ async function uninstall() {
 
 // Claude Code cannot remove managed hooks from user settings, and a session running as you cannot signal another user's
 // daemon or rewrite files it does not own. This is the difference between a seatbelt and a lock.
-function harden() {
+function stopDaemonAt(sock) {
+  return new Promise((resolve) => {
+    const socket = net.connect(sock);
+    socket.on("error", resolve);
+    socket.on("close", resolve);
+    socket.on("connect", () => socket.write(`${JSON.stringify({ op: "shutdown" })}\n`));
+    setTimeout(resolve, 2000);
+  });
+}
+
+async function harden() {
   if (process.platform !== "linux") die("sayso harden is built and tested for Linux with systemd. On this system the default install still stops accidents and injected agents, but a hostile session running as you could remove it.");
   if (process.getuid() !== 0) die("sayso harden needs root: sudo sayso harden");
   refuseInsideSession("sayso harden");
@@ -420,6 +430,7 @@ RuntimeDirectory=sayso
 RuntimeDirectoryMode=0755
 ExecStart=${nodePath} ${lib}/src/server.mjs
 Restart=always
+RestartSec=1
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=${HARDENED_HOME}
@@ -428,6 +439,8 @@ ReadWritePaths=${HARDENED_HOME}
 WantedBy=multi-user.target
 `,
   );
+  // It would hold the port, and the hardened daemon could not start.
+  await stopDaemonAt(personal.sock);
   run("systemctl", "daemon-reload");
   run("systemctl", "enable", "--now", "sayso.service");
   run("systemctl", "restart", "sayso.service");
@@ -492,7 +505,7 @@ switch (command) {
     await setup();
     break;
   case "harden":
-    harden();
+    await harden();
     break;
   case "uninstall":
     refuseInsideSession("sayso uninstall");
