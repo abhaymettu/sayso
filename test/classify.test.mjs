@@ -471,6 +471,8 @@ test('mcp: a command is read in every shape servers use', () => {
     assert.equal(classifyToolCall('mcp__x__do', input, CTX)?.risk, 'destructive', JSON.stringify(input));
   }
   assert.equal(classifyToolCall('mcp__x__do', { command: ['ls', '-la'] }, CTX), null);
+  assert.equal(classifyToolCall('mcp__x__do', { code: 'const a = b > c ? (x) => x + 1 : await fetch(`/x/${id}`); if (a > b) log(a)' }, CTX), null, 'shell syntax says nothing about code in another language');
+  assert.equal(classifyToolCall('mcp__x__do', { code: "require('fs').rmSync('victim', { recursive: true })" }, CTX)?.risk, 'opaque');
 });
 
 test('mcp: a tool named for what it does is held, and a read of the same thing is not', () => {
