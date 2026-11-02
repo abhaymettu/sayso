@@ -157,6 +157,7 @@ export class Rig {
   }
 
   async model(plan, hooks) {
+    this.scripted?.close();
     this.scripted = await startScriptedModel(plan, hooks);
     return this.scripted;
   }

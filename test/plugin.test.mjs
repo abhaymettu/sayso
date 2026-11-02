@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { test } from "node:test";
+import { test as nodeTest } from "node:test";
 import { fileURLToPath } from "node:url";
 import { CLAUDE, Rig, waitUntil } from "./harness/rig.mjs";
 
+const test = (name, fn) => nodeTest(name, { timeout: 150000 }, fn);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RM = { tool: "Bash", input: { command: "rm -rf victim", description: "run" } };
 

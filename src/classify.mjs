@@ -1043,11 +1043,13 @@ function keepingRealRisks(st, visit) {
   }
 }
 
-function spendStringWalk(st) {
-  if (st.stringWalks.left > 0) {
-    st.stringWalks.left--;
+// Walking the argv after `--` costs its length, so `a -- a -- a ...` pays for each pass and stays linear.
+function spendStringWalk(st, cost = 1) {
+  if (st.stringWalks.left >= cost) {
+    st.stringWalks.left -= cost;
     return true;
   }
+  st.stringWalks.left = 0;
   flag(st, OPAQUE, TOO_MANY);
   return false;
 }
@@ -1131,7 +1133,7 @@ function walkArgvTails(args, st) {
     const text = args[i].text;
     const name = text === '--' ? null : ruleKey(baseName(text));
     const tail = text === '--' ? args.slice(i + 1) : NEVER_A_SUBCOMMAND.has(name) || (name === 'rm' && RECURSIVE_FLAG.test(args[i + 1]?.text ?? '')) ? args.slice(i) : null;
-    if (tail?.length && spendStringWalk(st)) keepingRealRisks(st, (inner) => dispatch(tail, NO_IO, inner));
+    if (tail?.length && spendStringWalk(st, tail.length)) keepingRealRisks(st, (inner) => dispatch(tail, NO_IO, inner));
     if (text === '--') return;
   }
 }
@@ -2107,7 +2109,7 @@ function ruleAt(_args, io, st) {
 // Runners that take the program as plain trailing words, behind their own flags and names.
 function ruleArgvRunner(args, _io, st) {
   for (let i = 0; i < args.length; i++) {
-    if (RULES[ruleKey(baseName(args[i].text))] && spendStringWalk(st)) keepingRealRisks(st, (inner) => dispatch(args.slice(i), NO_IO, inner));
+    if (RULES[ruleKey(baseName(args[i].text))] && spendStringWalk(st, args.length - i)) keepingRealRisks(st, (inner) => dispatch(args.slice(i), NO_IO, inner));
   }
 }
 
