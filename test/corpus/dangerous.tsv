@@ -657,6 +657,7 @@ self	zellij action write-chars y
 self	cliclick t:y
 destructive	=rm -rf victim
 catastrophic	x(){ rm "$@"; }; x -rf victim
+catastrophic	x(){ rm $@; }; x -rf ~
 catastrophic	rm -rf "$@"
 catastrophic	rm -rf "$*"
 catastrophic	f() { rm -rf "$@"; }; f ~

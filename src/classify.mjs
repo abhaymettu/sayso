@@ -1914,7 +1914,7 @@ function ruleRm(args, _io, st) {
   // function's `$1` is the same however it is quoted, since the caller chooses it: `x() { rm "$1" "$2"; }; x -rf victim`.
   const carriesFlags = targets.some((target) => target.splits || POSITIONAL_PARAMETER.test(target.script));
   for (const target of targets.flatMap(braceWords)) {
-    if (recursive || (carriesFlags && !target.splits)) classifyRecursiveDelete(target, st);
+    if (recursive || (carriesFlags && (!target.splits || POSITIONAL_PARAMETER.test(target.script)))) classifyRecursiveDelete(target, st);
     else if (target.splits) flag(st, DESTRUCTIVE, 'delete with flags or names chosen at run time');
     else classifyPlainDelete(target, st);
   }
