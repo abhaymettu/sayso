@@ -65,10 +65,10 @@ const portOf = () => Number(process.env.SAYSO_PORT ?? readJson(paths.config, {})
 const claudeConfigDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude");
 const claudeSettingsPath = () => path.join(claudeConfigDir(), "settings.json");
 const MANAGED_SETTINGS = "/etc/claude-code/managed-settings.json";
-const NODE_NEEDED = "sayso needs Node 22.14 or newer";
+const NODE_NEEDED = "sayso needs Node 22.14 or newer, and 23.7 or newer on the 23 line";
 const nodeIsNewEnough = () => {
   const [major, minor] = process.versions.node.split(".").map(Number);
-  return major > 22 || (major === 22 && minor >= 14);
+  return major > 23 || (major === 23 && minor >= 7) || (major === 22 && minor >= 14);
 };
 const MEASURED_CLAUDE = [2, 1, 303];
 
@@ -363,7 +363,7 @@ async function doctor() {
   const agents = readJson(paths.agents, []).filter((a) => !a.revoked);
   check(agents.length > 0, agents.length ? `agents: ${agents.map((a) => a.name).join(", ")}` : "no agent connected", "run: sayso agent add <name>");
   const audit = verifyAudit(paths.audit);
-  check(audit.ok, audit.ok ? `audit log intact, ${audit.count} entries` : `audit log broken at line ${audit.broken_at}: ${audit.why}`, "something edited the audit log");
+  check(audit.ok, audit.ok ? `audit log's chain holds, ${audit.count} entries` : `audit log broken at line ${audit.broken_at}: ${audit.why}`, "something edited the audit log");
   if (flag("json")) return console.log(JSON.stringify(checks, null, 2));
   for (const c of checks) console.log(`${c.ok ? "ok  " : "todo"}  ${c.what}${c.ok || !c.fix ? "" : `\n      ${c.fix}`}`);
   if (checks.some((c) => !c.ok)) process.exitCode = 1;
@@ -658,7 +658,7 @@ switch (command) {
   case "audit": {
     if (flag("verify")) {
       const result = verifyAudit(paths.audit);
-      console.log(result.ok ? `intact, ${result.count} entries` : `BROKEN at line ${result.broken_at}: ${result.why}`);
+      console.log(result.ok ? `the chain holds, ${result.count} entries. Anything that can write the file could rebuild it.` : `BROKEN at line ${result.broken_at}: ${result.why}`);
       if (!result.ok) process.exitCode = 1;
       break;
     }

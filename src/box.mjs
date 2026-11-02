@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { openAudit } from "./audit.mjs";
-import { RISKS, matchesPassRule, matchesToolRule } from "./policy.mjs";
+import { FLOORS, RISKS, matchesPassRule, matchesToolRule } from "./policy.mjs";
 import { faithful, forDisplay, redact } from "./redact.mjs";
 import { encodeDoc, verifyApproval } from "./sign.mjs";
 
@@ -176,7 +176,7 @@ export function createBox({ paths, policy, agents = [], keys = [], pageUrl, onEv
   }
 
   function passRule({ session_id, tool, risk, name_only, input, dialog }) {
-    if (risk === "catastrophic" || risk === "self") return { pass: false };
+    if (FLOORS.includes(risk)) return { pass: false };
     let pass = false;
     if (tool !== "Bash") pass = name_only === true && matchesToolRule(tool, state.policy.trust_tools);
     else {

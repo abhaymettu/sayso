@@ -15,7 +15,7 @@ get around it, and [here is where it stops](#where-it-stops).
 ![A Claude Code session asks to run rm -rf data. The agent is told, says it can't approve that, and sends a link. The person holds to approve on their phone and gets a code. The agent passes the code back, and the session runs the command.](assets/demo.gif)
 
 That is one real take with a real Claude Code session and a real model as the agent. The session's model and the person's
-taps are scripted, in a phone-sized browser, so the take is repeatable. [`tools/record-demo.mjs`](tools/record-demo.mjs) records it again.
+taps are scripted, in a phone-sized browser, so the take is repeatable. `npm run demo` records it again.
 
 ## Install
 
@@ -53,7 +53,7 @@ one command. It doesn't touch your phone.
 
 - **A list of your sessions.** The state of each one, which folder it is in, whether it is waiting on you.
 - **A tap on the shoulder.** It gets told when a session needs something, by webhook, by a local command, or by long
-  polling. The median was BENCH_TOLD ms to a webhook on the same machine, over 300 headless runs. Your agent's own reaction
+  polling. The median was 80 to 85 ms to a webhook on the same machine, over three runs of 100 headless sessions. Your agent's own reaction
   takes as long as its model does.
 - **Answers to questions.** When a session asks you to pick an option, your agent can pick one of the options offered.
 - **No, any time.** It can deny any request.
@@ -246,7 +246,9 @@ node test/probe-hooks.mjs   # the hook facts, on your Claude Code version
 npx -y -p playwright@1.64.1 node test/page/verify-page.mjs   # the approval page in three browsers
 ```
 
-The gate adds about BENCH_ADDED ms to each tool call, mostly starting Node: BENCH_WITH ms against BENCH_WITHOUT ms for a `Bash true` round trip, median of 270 calls a side in each of three runs, with the sides alternating, on a 12-core laptop at load 7. The full numbers are in `bench/results.json`.
+The gate adds 76 to 80 ms to each tool call, 47 ms of it starting Node: 93 to 98 ms against 18 ms for a `Bash true` round trip, median of 270 calls a side in each of three runs, with the sides alternating, on a 12-core laptop at load 7 to 8. The three runs are in [`bench/runs/`](bench/runs/).
+
+The classifier flags 1.931 percent of the 194,449 Bash commands in my own Claude Code transcripts, in 23 microseconds at the median. `node tools/measure-classifier.mjs --dir <folder>` prints the same counts for yours, and only counts. Those holds are the price of the gate, so that is the number I watched as the rules grew.
 
 ## License
 

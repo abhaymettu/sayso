@@ -1,0 +1,57 @@
+{
+  "machine": "Apple M4 Pro, 12 cores, darwin 25.5.0",
+  "node": "v26.10.0",
+  "claude_code": "2.1.303 (Claude Code)",
+  "unit": "milliseconds",
+  "load_average_at_start": 8.2275390625,
+  "session_needs_input_to_agent_told": {
+    "sse": {
+      "n": 100,
+      "p50": 79.1,
+      "p95": 84.4,
+      "p99": 88.3,
+      "max": 88.3
+    },
+    "long_poll": {
+      "n": 100,
+      "p50": 79.4,
+      "p95": 84.4,
+      "p99": 89.1,
+      "max": 89.1
+    },
+    "webhook": {
+      "n": 100,
+      "p50": 79.6,
+      "p95": 84.6,
+      "p99": 91.4,
+      "max": 91.4
+    }
+  },
+  "gate_on_an_ordinary_command_alone": {
+    "n": 50,
+    "p50": 65.8,
+    "p95": 72.1,
+    "p99": 81.6,
+    "max": 81.6
+  },
+  "tool_round_trip": {
+    "without_sayso": {
+      "n": 270,
+      "p50": 17.9,
+      "p95": 50.3,
+      "p99": 67.6,
+      "max": 79.5,
+      "failed_runs": 0
+    },
+    "with_sayso": {
+      "n": 270,
+      "p50": 95.1,
+      "p95": 138.6,
+      "p99": 167.8,
+      "max": 172,
+      "failed_runs": 0
+    }
+  },
+  "load_average_at_end": 6.490234375,
+  "wall_seconds": 138
+}

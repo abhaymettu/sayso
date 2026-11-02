@@ -9,6 +9,13 @@ import { matchesPassRule, matchesToolRule, normalizePolicy, PRESETS } from "../s
 import { faithful, forDisplay, redact } from "../src/redact.mjs";
 import { encodeDoc, generatePairing, signAsDevice, verifyApproval } from "../src/sign.mjs";
 
+test("the watchdog fires past the longest hold and before Claude Code's own timeout", () => {
+  const limit = Number(/SAYSO_GATE_LIMIT:-(\d+)/.exec(fs.readFileSync("hooks/run.sh", "utf8"))[1]);
+  assert.ok(MAX_HOLD_SECONDS < limit);
+  const gates = JSON.parse(fs.readFileSync("hooks/hooks.json", "utf8")).hooks;
+  for (const event of ["PreToolUse", "PermissionRequest"]) assert.ok(limit < gates[event][0].hooks[0].timeout, event);
+});
+
 describe("redact", () => {
   const cases = [
     ["anthropic key", "x sk-ant-api03-abcDEF123456789012345678 y", "x [redacted key] y"],

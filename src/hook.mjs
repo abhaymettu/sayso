@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { classifyToolCall, readToTheEnd } from "./classify.mjs";
 import { MAX_HOLD_SECONDS, statePaths } from "./paths.mjs";
+import { FLOORS } from "./policy.mjs";
 
 const paths = statePaths();
 const mode = process.argv[2];
@@ -151,7 +152,7 @@ function verdictFor(input) {
 }
 
 async function passedByRule(input, verdict) {
-  if ((input.tool_name !== "Bash" && !verdict.nameOnly) || verdict.risk === "catastrophic" || verdict.risk === "self") return false;
+  if ((input.tool_name !== "Bash" && !verdict.nameOnly) || FLOORS.includes(verdict.risk)) return false;
   const reply = await ask({ op: "pass", session_id: input.session_id, risk: verdict.risk, name_only: verdict.nameOnly, tool: input.tool_name, input: input.tool_input, dialog: input.hook_event_name !== "PreToolUse" }, ASK_LIMIT_MS);
   return reply?.pass === true;
 }

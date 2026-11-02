@@ -22,7 +22,7 @@ export const PRESETS = {
   },
 };
 
-const FLOORS = ["catastrophic", "self"];
+export const FLOORS = ["catastrophic", "self"];
 const NAMES_A_SERVER = /^mcp__[^*]+?__[^*]*\*?$/;
 
 export function normalizePolicy(raw) {

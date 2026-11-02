@@ -8,7 +8,7 @@
   "repository": "github:abhaymettu/sayso",
   "homepage": "https://abhaymettu.github.io/sayso/",
   "bin": { "sayso": "bin/sayso.mjs" },
-  "engines": { "node": ">=22.14" },
+  "engines": { "node": ">=22.14 <23 || >=23.7" },
   "files": ["bin", "src", "hooks", "skills", ".claude-plugin", "README.md", "AGENTS.md", "LICENSE"],
   "scripts": {
     "test": "node --test --test-timeout=1800000 --test-concurrency=4 test/*.test.mjs",
@@ -19,6 +19,7 @@
     "bench": "node bench/latency.mjs",
     "test:smoke": "node test/smoke.mjs",
     "test:sdk": "npm i --no-save --omit=optional --no-audit --no-fund @anthropic-ai/claude-agent-sdk@0.3.316 && node test/sdk-host.mjs",
-    "probe": "node test/probe-hooks.mjs"
+    "probe": "node test/probe-hooks.mjs",
+    "demo": "npx -y -p playwright@1.64.1 sh -c 'NODE_PATH=$(dirname $(dirname $(which playwright)))/node_modules node tools/record-demo.mjs'"
   }
 }
