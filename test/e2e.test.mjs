@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { describe, test } from "node:test";
+import { describe, test as nodeTest } from "node:test";
 import { Rig, sleep, waitUntil } from "./harness/rig.mjs";
 
+// node applies --test-timeout to whole files as well, so the bound on one test goes here.
+const test = (name, fn) => nodeTest(name, { timeout: 150000 }, fn);
 const RM = { tool: "Bash", input: { command: "rm -rf victim", description: "delete the folder" } };
 const FINISH = { text: "finished" };
 

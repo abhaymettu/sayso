@@ -5,11 +5,13 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { describe, test } from "node:test";
+import { describe, test as nodeTest } from "node:test";
 import { verifyAudit } from "../src/audit.mjs";
 import { encodeDoc, generatePairing, signAsDevice } from "../src/sign.mjs";
 import { Rig, sleep, waitUntil } from "./harness/rig.mjs";
 
+// node applies --test-timeout to whole files as well, so the bound on one test goes here.
+const test = (name, fn) => nodeTest(name, { timeout: 150000 }, fn);
 const bash = (command) => ({ tool: "Bash", input: { command, description: "run" } });
 const RM = bash("rm -rf victim");
 const FINISH = { text: "finished" };
