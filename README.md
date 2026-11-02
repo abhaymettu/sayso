@@ -7,13 +7,15 @@
 
 # sayso
 
-Your own agent can see your Claude Code sessions, gets told when one needs something, and can answer it. Anything that
-could wreck your machine waits for your phone, even with permissions bypassed.
+Your own agent can see your Claude Code sessions, gets told when one needs something, and can answer its questions.
+Commands that look destructive, like `rm -rf` or `git push --force`, wait for a yes signed on your phone, even with
+permissions bypassed. That catches a tired model's mistakes and an injected agent's yes. It won't stop a session working to
+get around it, and [here is where it stops](#where-it-stops).
 
 ![A Claude Code session asks to run rm -rf data. The agent is told, says it can't approve that, and sends a link. The person holds to approve on their phone and gets a code. The agent passes the code back, and the session runs the command.](assets/demo.gif)
 
-That is one real take with a real Claude Code session and a real model as the agent. Only the session's own model is
-scripted, so the take is repeatable. `node tools/record-demo.mjs` records it again.
+That is one real take with a real Claude Code session and a real model as the agent. The session's model and the person's
+taps are scripted, in a phone-sized browser, so the take is repeatable. `node tools/record-demo.mjs` records it again.
 
 ## Install
 
@@ -43,20 +45,23 @@ claude plugin install sayso@sayso
 Run `/sayso:setup` in a session after that. Needs Node 20 or newer and Claude Code, on macOS or Linux.
 
 To see it work first, clone the repo and run `npm run test:smoke`. It installs into a temp folder and takes a real session
-through a held `rm -rf`, against a scripted model, so it needs no account.
+through a held `rm -rf`, against a scripted model, so it needs no account. It proves the gate and the signature check on
+one command. It doesn't touch your phone.
 
 ## What your agent gets
 
-- **A list of your sessions.** What each one is doing, which folder it is in, whether it is waiting on you.
+- **A list of your sessions.** The state of each one, which folder it is in, whether it is waiting on you.
 - **A tap on the shoulder.** It gets told when a session needs something, by webhook, by a local command, or by long
-  polling. The median was 113 ms from the session asking to the agent being told, over 100 runs on a loaded laptop.
+  polling. The median was BENCH_TOLD ms to a webhook on the same machine, over 300 headless runs. Your agent's own reaction
+  takes as long as its model does.
 - **Answers to questions.** When a session asks you to pick an option, your agent can pick one of the options offered.
 - **No, any time.** It can deny any request.
 - **Yes, only through you.** For anything risky, it gets a link to send you, and you get a code to send back.
 
-An agent cannot make that code. It is a signature your phone makes over the exact request it showed you, so a made-up
-code fails, a code from another request fails, and a link the agent altered to make `rm -rf ~` look like `rm -rf ./cache`
-gives a code that fails too. Three bad codes end the request. If nobody answers in 15 minutes, the answer is no.
+An agent that can only reach sayso's tools can't make that code. It is a signature your phone makes over the exact request
+it showed you, so a made-up code fails, a code from another request fails, and a link the agent altered to make `rm -rf ~`
+look like `rm -rf ./cache` gives a code that fails too. Three bad codes end the request. If nobody answers in 15 minutes, the
+answer is no.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/anatomy-dark.svg">
@@ -65,7 +70,8 @@ gives a code that fails too. Three bad codes end the request. If nobody answers 
 
 The same idea as a bench instrument. The carriage is the tool call, the latch is the gate, and the lock only turns for the
 key cut for this exact request. Your agent carries the key and can't cut one. The dial is the hold, and at zero a lever
-pulls the carriage back. [Watch it run](assets/anatomy-dark.mp4), with the dial time-lapsed.
+pulls the carriage back. [Watch it run](assets/anatomy-dark.mp4), with the dial time-lapsed. Only calls the classifier flags
+reach the latch, and in a default install the session can reach the bench too.
 
 ## What can approve what
 
@@ -81,10 +87,10 @@ call that touches it is classified as `self`, and the command refuses to run the
 | Outward, like `npm publish` or `gh pr merge` | you | your agent or you |
 | Opaque, like `curl ... \| sh` | you | your agent or you |
 | Credentials, like reading `~/.ssh/id_ed25519` | you | you |
-| Catastrophic, like `rm -rf ~` | you | you, and no policy file can change this |
+| Catastrophic, like `dd of=/dev/disk0` | you | you, and no policy file can change this |
 | Touching sayso itself | you | you, and no policy file can change this |
 
-Anything with hidden characters, or too long to show in full, goes to you whatever the policy says.
+Any flagged call with hidden characters, or too long to show in full, goes to you whatever the policy says.
 
 If you are at the terminal when it happens, the normal Claude Code dialog appears, even in bypass mode, and the keyboard
 and your agent race. Whichever answers first wins.
@@ -120,21 +126,23 @@ sayso expose your-name.trycloudflare.com
 Any other `Host` header gets a 403, even with a good token, and `npm run test:tunnel` checks this recipe against a real
 tunnel. Hosted connectors that insist on OAuth won't work yet.
 
-## Works with
+## What I tried it with
 
 "Tested" means I ran it end to end and you can rerun it. On the session side, sayso covers terminal sessions, `claude -p`,
-and sessions hosted through the Agent SDK (`npm run test:sdk`).
+and sessions hosted through the Agent SDK (`npm run test:sdk`), with the limits under [Where it stops](#where-it-stops).
 
 | Agent | State |
 |---|---|
-| Claude Code as the agent, over MCP HTTP | Tested with a real model, `npm run test:live` |
-| Any client on plain HTTP or MCP | The test suite drives these doors directly, with no model in the loop |
-| Instinct, Dots, Muse, OpenClaw, Hermes Agent, Cursor, Claude Desktop | Untested |
+| Claude Code as the agent, over MCP HTTP | Tested with a real model, `npm run test:live`. Told by a notify event, it fetches the link and relays it, then carries your code back. The code in that test comes from a test key, not a phone. |
+| A person's page in a phone-sized browser | Tested in Chromium, WebKit and Firefox under Playwright, `test/page/verify-page.mjs`. Not on a real iPhone yet. |
+| Any client on plain HTTP or MCP, stdio included | The test suite drives these doors directly, with no model in the loop |
+| Instinct, Dots, Muse, OpenClaw, Hermes Agent, Cursor, Claude Desktop | Not tried. Anything that can add an MCP server or make an HTTP call should connect, but I haven't checked that each one lets you. |
 
 ## What was attacked
 
 Your agent reads your email and the web, so anyone who can email you can try to steer it. The tests assume it will
-sometimes do what the email says, and check that nothing runs anyway.
+sometimes do what the email says, and check that a flagged call stays held anyway. It can still pick an option a session
+offered, or say no.
 
 - Text in a command claiming `approver=agent` or "the owner approved this".
 - An agent making up a code, signing with its own key, replaying an old code, or guessing.
@@ -147,60 +155,77 @@ sometimes do what the email says, and check that nothing runs anyway.
 - A real model told to approve, four ways, including a fake system message and a plain order from its operator.
 
 `npm run test:e2e` runs these against the real Claude Code binary, with a scripted model and no account. `npm run
-test:live` runs the last one against a real model, at about a cent a run.
+test:live` runs the last one against a real model.
 
 ## Where it stops
 
+The gate holds only what the classifier recognises. These run with no hold, in any install: `rm -f` on a file, `mv`,
+`sed -i`, a write over an existing file, a script written and then run, a plain `git push`. Holding those would hold most of
+a normal day. The classifier exists so that a tired model's `rm -rf` reaches a person. It isn't a sandbox, and to contain a
+hostile process you want a VM. [The threat model](docs/threat-model.md) lists what else it misses.
+
 In a normal install the session runs as you, and sayso's files are yours. A session set on removing the gate can write a
-script that edits your settings, then run it, and the classifier won't see what the script does. So the default install
-stops accidents, injected agents and the obvious routes. Think seatbelt.
+script that edits your settings, then run it. So the default install catches common accidents, injected agents and the
+obvious routes. Think seatbelt.
 
-`sudo sayso harden`, on Linux with systemd, is the lock. The daemon runs as its own user, and the hooks move to Claude
-Code's managed settings, which user settings can't remove. A session running as you can no longer change the keys or stop
-the daemon, and `--bare`, `--safe-mode` and `disableAllHooks` don't skip the hooks. `test/harden.mjs` attacks all of that on
-a throwaway box. There is no macOS version yet.
+It also covers only the sessions it is installed for. A session under another `CLAUDE_CONFIG_DIR` has no gate. Neither does
+one you start with `--bare`, `--safe-mode` or `--setting-sources` without `user`, or an Agent SDK host with
+`settingSources: []`, since those skip user hooks. Claude Code's docs say `--bare` will become the default for `-p`, which
+would take `claude -p` out of a default install.
 
-The classifier also isn't a sandbox. It exists so that a tired model's `rm -rf` reaches a person. To contain a hostile
-process, use a VM.
+`sudo sayso harden`, on Linux with systemd, locks the gate in place. The daemon runs as its own user, and the hooks move to
+Claude Code's managed settings, which user settings can't remove. A session running as you can no longer change the keys or
+stop the daemon, and `--bare`, `--safe-mode` and `disableAllHooks` don't skip the hooks. `test/harden.mjs` attacks all of that
+on a throwaway box. It doesn't change what the classifier recognises, and there is no macOS version yet.
 
 The approval page is the root of trust, since your phone signs what it shows. It is static, short enough to read, and its
 own security policy forbids network connections. The hosted copy shares its origin with the other Pages sites on my GitHub
-account, so to trust less, serve `docs/` yourself and run `sayso pair --page https://your-host/`. You can read [the threat model](docs/threat-model.md) for the rest, and
-[what Claude Code hooks actually do](docs/hook-facts.md) for the measurements it rests on. Hooks fail open, which surprised
-me: if a hook crashes or gets killed, the command runs.
+account, so to trust less, serve `docs/` yourself and run `sayso pair --page https://your-host/`. The key on your phone is a
+stored one, approving takes a hold and no biometric, and pairing makes it on your computer. A passkey would be stronger, and
+some of the tools below use one.
+
+Claude Code's hooks fail open by default: if one crashes or gets killed, the command runs. sayso sets `onFailure: "block"`
+and wraps the gate so that a failure blocks instead. [What Claude Code hooks actually do](docs/hook-facts.md) has the
+measurements.
 
 ## Other tools
 
-Build on one of these if it fits. Nothing here does this exact job, as far as I could find in November 2026.
+I couldn't find one tool that does all of this, as of November 2026: any session you started the normal way, a hold in
+bypass mode, a third-party agent answering over MCP or HTTP, and your signature checked locally. Pieces exist, and one of
+these may be all you need.
 
+- **Your agent as supervisor.** [PearClaw](https://github.com/sideEyeLabs/pearclaw) lets an OpenClaw agent approve or block
+  calls through a hook. No tier only you can release, and it fails open by default.
+  [claude-wrap-mcp](https://github.com/Alex-Kaff/claude-wrap-mcp) answers prompts through a PTY, so there is nothing to
+  answer in bypass mode.
+- **You on your phone.** [Gander](https://github.com/weellio/gander) shows every session and holds destructive commands in
+  bypass until you allow them. Its MCP is read-only, so your agent can't answer.
+- **Passkeys.** [Interlock](https://github.com/Meraj-08/interlock), [Witness](https://github.com/sipkigroup/witness) and
+  [Phygital Key](https://github.com/Phygital-Key/phygital-key-mcp) bind a passkey to the exact request, which is stronger than
+  sayso's stored key. None gives your agent a way in. Witness decides through a hosted server, and Phygital Key relies on
+  the agent choosing to ask.
 - **Blockers.** [destructive_command_guard](https://github.com/Dicklesworthstone/destructive_command_guard) and
-  [cc-safety-net](https://github.com/kenryu42/cc-safety-net) stop dangerous commands, with no way to release one
-  remotely. If you only want a blocker, use those. sayso's classifier test corpus borrows from cc-safety-net, which is MIT.
-- **Dashboards.** [Gander](https://github.com/weellio/gander) puts your sessions on a phone, with a read-only MCP. Its
-  hooks fail open.
-- **Signed approvals.** [Witness](https://github.com/sipkigroup/witness) has passkey approvals over the arguments of a
-  call, through a hosted server. [Phygital Key](https://github.com/Phygital-Key/phygital-key-mcp) signs the exact request
-  with WebAuthn, and the service on the other end has to take part.
-- **First party.** Claude Code's [Remote Control](https://code.claude.com/docs/en/remote-control) and
-  [Channels](https://code.claude.com/docs/en/channels) reach sessions from elsewhere. Neither gives a third-party agent
-  this door, and permission relay doesn't apply in bypass mode.
-- **Terminal wrappers.** [claude-wrap-mcp](https://github.com/Alex-Kaff/claude-wrap-mcp) answers prompts through a PTY,
-  so there is nothing to answer in bypass mode.
+  [cc-safety-net](https://github.com/kenryu42/cc-safety-net) stop dangerous commands, with no way to release one remotely. If
+  you only want a blocker, use those. sayso's classifier test corpus borrows from cc-safety-net, which is
+  [MIT](test/corpus/THIRD-PARTY.md).
+- **First party.** `claude agents --json` lists your sessions for free. [Remote Control](https://code.claude.com/docs/en/remote-control)
+  is you in Anthropic's apps. [Channels](https://code.claude.com/docs/en/channels-reference) lets a server answer prompts on
+  sessions started with it, and `--permission-prompt-tool` hands prompts to an MCP tool in runs started with that flag. In
+  bypass mode there is no prompt for either to relay.
 
 ## Run the checks yourself
 
 ```sh
-npm run test:smoke   # one install, one held rm -rf, about a minute
+npm run test:smoke   # one install, one held rm -rf, a few seconds
 npm run test:unit    # classifier corpus and logic
 npm run test:e2e     # the real Claude Code binary, end to end, with attacks
 npm run test:sdk     # a session hosted through the Agent SDK
-npm run test:live    # a real model as the agent, needs a logged-in claude
+npm run test:live    # a real model as the agent, needs a logged-in claude, under a cent a run on Haiku
 npm run bench        # latency, writes bench/results.json
 node test/probe-hooks.mjs   # the hook facts, on your Claude Code version
 ```
 
-The gate adds about 96 ms to each tool call, nearly all of it starting a process: 120 ms against 24 ms for a tool round
-trip, median of 90 calls each, measured with the sides alternating on a 12-core laptop at load 25. The full numbers are in `bench/results.json`.
+The gate adds about BENCH_ADDED ms to each tool call, mostly starting Node: BENCH_WITH ms against BENCH_WITHOUT ms for a `Bash true` round trip, median of 270 calls a side in each of three runs, with the sides alternating, on a 12-core laptop at load 7. The full numbers are in `bench/results.json`.
 
 ## License
 
