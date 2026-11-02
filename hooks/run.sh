@@ -14,6 +14,10 @@ if [ "$mode" != gate ]; then
   "$node_bin" "$root/src/hook.mjs" "$mode"
   exit $?
 fi
+if ! command -v "$node_bin" >/dev/null 2>&1; then
+  echo "sayso: could not find Node, so this tool call was blocked. Install with: npx github:abhaymettu/sayso setup, which records where Node is." >&2
+  exit 2
+fi
 
 # The gate keeps its own clocks, but a process that is stopped or stuck in a system call can't run them. This one needs
 # nothing from it. It fires past the longest hold (3000 s) and before the hook timeout (3600 s), and the kill becomes a
@@ -39,9 +43,6 @@ code=$?
 kill "$watchdog" 2>/dev/null
 case "$code" in
   0) exit 0 ;;
-  127)
-    echo "sayso: could not find Node, so this tool call was blocked. Install with: npx github:abhaymettu/sayso setup, which records where Node is." >&2
-    exit 2 ;;
   *)
     echo "sayso: the gate failed (exit $code), so this tool call was blocked. Run: sayso doctor. To remove sayso: sayso uninstall" >&2
     exit 2 ;;

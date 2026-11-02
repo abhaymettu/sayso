@@ -231,6 +231,7 @@ describe("the terminal", () => {
     withRig({}, [RM, FINISH], async (rig) => {
       const t = await start(rig);
       await t.waitFor(/Do you want to proceed/);
+      await rig.nextRequest();
       t.keys("Enter");
       await t.waitFor(/finished/);
       assert.equal(rig.destroyed(), true);
