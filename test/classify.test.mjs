@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -160,9 +160,19 @@ function coldRun(modulePath, exportName, input) {
       const result = m.${exportName}(input, ${JSON.stringify(CTX)});
       console.log(JSON.stringify({ ms: performance.now() - start, result }));
     });`;
-  const child = spawnSync(process.execPath, ['-e', script], { input, encoding: 'utf8' });
-  assert.equal(child.status, 0, child.stderr);
-  return JSON.parse(child.stdout);
+  // spawnSync with a large `input` sometimes never finishes on macOS: the child waits on stdin and the parent in its loop,
+  // with none of our code involved. Node 26.10, 200 KB, within 200 calls. A file as stdin has no such write to lose.
+  const dir = mkdtempSync(join(tmpdir(), 'sayso-cold-'));
+  writeFileSync(join(dir, 'input'), input);
+  const stdin = openSync(join(dir, 'input'), 'r');
+  try {
+    const child = spawnSync(process.execPath, ['-e', script], { stdio: [stdin, 'pipe', 'pipe'], encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+    return JSON.parse(child.stdout);
+  } finally {
+    closeSync(stdin);
+    rmSync(dir, { recursive: true });
+  }
 }
 
 const bestOfTwo = (run) => {
