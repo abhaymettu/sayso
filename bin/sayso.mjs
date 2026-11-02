@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -39,7 +39,7 @@ function hasClaudeAncestor() {
 // The variables can be stripped with `env -u`, so also walk the process tree. Both only raise the bar: a same-user process
 // can detach or edit the files directly, which is why the hardened install exists. Throwaway state in a temp folder, as in
 // the test rig, is not the guard and does not need guarding.
-const guardsRealState = () => path.resolve(paths.dir) === path.join(os.userInfo().homedir, ".sayso") || isHardened();
+const guardsRealState = () => path.resolve(paths.dir) === path.join(userInfo().homedir, ".sayso") || isHardened();
 const insideSession = () => !!process.env.CLAUDECODE || !!process.env.CLAUDE_CODE_ENTRYPOINT || (guardsRealState() && hasClaudeAncestor());
 const refuseInsideSession = (what) => {
   if (insideSession()) die(`run ${what} in your own terminal, not inside a Claude Code session. It would put a secret in the transcript or let a session change its own guard.`);
