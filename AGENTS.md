@@ -34,8 +34,9 @@ Then confirm:
 ~/.local/bin/sayso doctor
 ```
 
-Expected at this point: `todo` lines for the paired device and the agent, and `ok` for everything else. Sessions already
-running need a restart to be covered.
+Expected at this point: `todo` lines for the paired device and the agent, and `ok` for everything else. It exits 1 while
+any `todo` remains, so that exit code is normal here. Sessions already running need a restart to be covered. If
+`~/.local/bin` isn't on your `PATH`, use that full path wherever this guide says `sayso`.
 
 ## 3. Connect yourself
 
