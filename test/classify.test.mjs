@@ -467,7 +467,7 @@ test('measure tool reports aggregates and keeps command text off stdout', () => 
 });
 
 test('mcp: a command is read in every shape servers use', () => {
-  for (const input of [{ command: ['rm', '-rf', 'victim'] }, { command: 'rm', arguments: ['-rf', 'victim'] }, { args: ['rm', '-rf', 'victim'] }, { program: 'rm', args: ['-rf', 'victim'] }, { cmdline: 'rm -rf victim' }, { exec: 'rm -rf victim' }, { run: 'rm -rf victim' }, { code: 'rm -rf victim' }, { commands: ['ls', 'rm -rf victim'] }]) {
+  for (const input of [{ code: ['rm', '-rf', 'victim'] }, { code: 'rm', args: ['-rf', 'victim'] }, { code: 'rm -rf victim' }, { command: ['rm', '-rf', 'victim'] }, { command: 'rm', arguments: ['-rf', 'victim'] }, { args: ['rm', '-rf', 'victim'] }, { program: 'rm', args: ['-rf', 'victim'] }, { cmdline: 'rm -rf victim' }, { exec: 'rm -rf victim' }, { run: 'rm -rf victim' }, { code: 'rm -rf victim' }, { commands: ['ls', 'rm -rf victim'] }]) {
     assert.equal(classifyToolCall('mcp__x__do', input, CTX)?.risk, 'destructive', JSON.stringify(input));
   }
   assert.equal(classifyToolCall('mcp__x__do', { command: ['ls', '-la'] }, CTX), null);

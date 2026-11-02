@@ -542,3 +542,4 @@ tmux list-sessions
 claude plugin list
 claude -p hi
 osascript -e 'get volume settings'
+osascript -l JavaScript -e 'Application("Finder").name()'

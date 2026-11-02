@@ -1004,7 +1004,11 @@ self	tmux run-shell x
 self	tmate send-keys Enter
 self	byobu send-keys Enter
 self	screen -X eval 'stuff y'
-self	osascript -l JavaScript -e x
+self	osascript -l JavaScript -e 'Application("System Events").keystroke("y")'
+self	osascript -l JavaScript -e 'Application("System Events").keyCode(36)'
+self	osascript -l JavaScript -e 'Application("Terminal").doScript("y")'
+self	osascript -l JavaScript press.js
+self	osascript -l JavaScript < press.js
 self	osascript /tmp/press.scpt
 self	xte 'key Return'
 self	dtach -p /tmp/s

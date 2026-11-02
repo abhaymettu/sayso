@@ -2868,7 +2868,7 @@ function checkSwift(code, st) {
 }
 
 function checkOsascript(code, st) {
-  if (/\b(?:keystroke|key\s?code|write text|do script)\b/i.test(code)) flag(st, SELF, TYPES_KEYS);
+  if (/\b(?:keystroke|key\s?code|write\s?text|do\s?script)\b/i.test(code)) flag(st, SELF, TYPES_KEYS);
   if (/\bdelete\b|\bempty\s+(?:the\s+)?trash\b|\berase\b/i.test(code)) flag(st, DESTRUCTIVE, 'inline code deletes files');
 }
 
@@ -3205,10 +3205,10 @@ for (const [name, check] of Object.entries(EXTRA_VERB_CHECKS)) {
 // Public API.
 
 /** @param {string} command @param {Ctx} ctx @returns {Verdict|null} */
-// `-l JavaScript` and a script file run code these rules can't read for keystrokes. A heredoc and `-e` are read.
+// A script file runs code these rules can't read for keystrokes. A heredoc and `-e` are read, in either language.
 const readOsascript = RULES.osascript;
 RULES.osascript = (args, io, st, key) => {
-  if (args.some((arg) => arg.text.startsWith('-l')) || (!io.heredoc && !args.some((arg) => arg.text.startsWith('-e')))) flag(st, SELF, TYPES_KEYS);
+  if (!io.heredoc && !args.some((arg) => arg.text.startsWith('-e'))) flag(st, SELF, TYPES_KEYS);
   readOsascript(args, io, st, key);
 };
 
@@ -3303,7 +3303,9 @@ const MCP_OUTWARD_TOOL = /delete|destroy|remove|purge|wipe|terminate|revoke|publ
 const MCP_READ_ONLY = /^(?:get|list|read|search|find|describe|show|fetch|view|count|check|is|has)(?:[_-]|$)/;
 const MCP_RUNS_THINGS = /exec|shell|write|command|(?:^|[_-])(?:re)?run(?:s|ner)?(?:[_-]|$)|(?:^|[_-])(?:bash|eval|terminal|spawn|launch|invoke|edit|patch|save|append|overwrite)(?:[_-]|$)|(?:^|[_-])create[_-](?:file|dir|directory|folder)(?:[_-]|$)|^(?:sh|zsh|python3?|node|ruby|perl|php|lua|applescript|osascript|powershell|pwsh|system)$/;
 // Servers name their arguments freely, so a key is read by its words: `shell_command`, `filePath`, `sqlQuery`.
-const MCP_COMMAND_KEY = new Set(['command', 'commands', 'cmd', 'cmds', 'cmdline', 'script', 'scripts', 'shell', 'bash', 'sh', 'exec', 'executable', 'run', 'code', 'program', 'argv']);
+const MCP_COMMAND_KEY = new Set(['command', 'commands', 'cmd', 'cmds', 'cmdline', 'script', 'scripts', 'shell', 'bash', 'sh', 'exec', 'executable', 'run', 'program', 'argv']);
+// What a shell makes of a program in another language, so it says nothing about that program.
+const NOT_SHELL_SYNTAX = new Set(['shell syntax could not be parsed', 'command name is not literal', 'a zsh glob qualifier runs code', 'empties a file']);
 // What a server calls the rest of a command, when its first word is under a command key.
 const MCP_ARGUMENT_KEYS = ['args', 'arguments', 'argv', 'params', 'parameters'];
 const MCP_SQL_KEY = new Set(['sql', 'statement', 'statements', 'stmt']);
@@ -3341,13 +3343,14 @@ function mcpStrings(value, kind, found, depth) {
   }
   for (const [key, child] of Object.entries(value)) {
     const words = camelToSnake(key).split(/[^a-z0-9]+/);
-    const childKind = words.some((word) => MCP_COMMAND_KEY.has(word)) ? 'command' : words.some((word) => MCP_SQL_KEY.has(word)) ? 'sql' : words.includes('query') || words.includes('q') ? 'query' : words.some((word) => MCP_PATH_KEY.has(word)) ? 'path' : kind;
+    const childKind = words.some((word) => MCP_COMMAND_KEY.has(word)) ? 'command' : words.includes('code') ? 'code' : words.some((word) => MCP_SQL_KEY.has(word)) ? 'sql' : words.includes('query') || words.includes('q') ? 'query' : words.some((word) => MCP_PATH_KEY.has(word)) ? 'path' : kind;
     // `{command: "sh", arguments: ["-c", "rm -rf x"]}` is one command in two fields.
     const siblings = MCP_ARGUMENT_KEYS.filter((name) => name !== key).flatMap((name) => stringsIn(value[name]));
-    if (childKind === 'command' && typeof child === 'string' && siblings.length) mcpArgvString([child, ...siblings], found);
-    else if (Array.isArray(child) && (childKind === 'command' || (MCP_ARGUMENT_KEYS.includes(key) && !Object.keys(value).some((name) => MCP_COMMAND_KEY.has(camelToSnake(name)))))) {
+    const runnable = childKind === 'command' || childKind === 'code';
+    if (runnable && typeof child === 'string' && siblings.length) mcpArgvString([child, ...siblings], found);
+    else if (Array.isArray(child) && (runnable || (MCP_ARGUMENT_KEYS.includes(key) && !Object.keys(value).some((name) => MCP_COMMAND_KEY.has(camelToSnake(name)))))) {
       mcpArgvString(stringsIn(child), found);
-      if (childKind === 'command') mcpStrings(child, childKind, found, depth + 1);
+      if (runnable) mcpStrings(child, childKind, found, depth + 1);
     } else mcpStrings(child, childKind, found, depth + 1);
   }
 }
@@ -3368,6 +3371,10 @@ function classifyMcpPath(text, readOnly, ctx) {
 function classifyMcpString({ kind, text }, readOnly, ctx) {
   if (text.length > MAX_COMMAND_LENGTH) return opaqueVerdict('command is too long to read');
   if (kind === 'command') return readCommand(text, ctx);
+  if (kind === 'code') {
+    const asShell = readCommand(text, ctx);
+    return worstVerdict([asShell?.why.some((why) => !NOT_SHELL_SYNTAX.has(why)) ? asShell : null, readCommand(`node -e ${shellQuote(text)}`, ctx)]);
+  }
   if (kind === 'path') return classifyMcpPath(text, readOnly, ctx);
   const sql = text.replace(/\/\*[^]*?\*\//g, ' ').replace(/(?:--|#)[^\n]*/g, ' ').replace(/^[\s(]+/, '');
   if (kind === 'query' && !LOOKS_LIKE_SQL.test(sql)) return null;

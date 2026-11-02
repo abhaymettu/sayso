@@ -347,7 +347,7 @@ async function doctor() {
         if (project.hooks) check(false, `${file} adds hooks of its own. They run as you in any session started here, so they could remove the gate`, "read them before running a session in this folder");
         const envNames = Object.keys(project.env ?? {});
         const beforeUs = envNames.filter((name) => /^(?:LD|DYLD)_/.test(name));
-        if (beforeUs.length) check(false, `${file} sets ${beforeUs.join(", ")}. The system's loader acts on that before any code of sayso's runs, so on Linux this folder can stop the gate`, "don't run a session in this folder. sudo sayso harden clears these");
+        if (beforeUs.length) check(false, `${file} sets ${beforeUs.join(", ")}. The system's loader acts on that before any code of sayso's runs, so on Linux, or a Mac with System Integrity Protection off, this folder can stop the gate`, "don't run a session in this folder. sudo sayso harden clears these");
         if (envNames.length) check(false, `${file} sets env (${envNames.join(", ")}). The gate starts with no shell and clears its own environment, so the rest don't reach it, but they reach everything else a session here runs`, "read it before running a session in this folder");
       }
     }

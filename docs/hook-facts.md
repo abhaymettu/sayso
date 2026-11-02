@@ -40,7 +40,7 @@ but plain text on stdout isn't one, so that row stays open.
 This is the trap for anything built on hooks. A guard that crashes, runs out of memory or loses its runtime turns off
 without a sound, and the thing it was guarding happens anyway.
 
-sayso's answer has five parts:
+sayso's answer has these parts:
 
 - The gate's hook entries set `onFailure: "block"`, so a kill or a timeout blocks the call on a Claude Code that knows the
   field.
@@ -80,24 +80,60 @@ about ordinary commands, and "a prompt never appears in bypass" has that small e
   wakes the model. Claude Code wraps that text as "SYSTEM NOTIFICATION - NOT USER INPUT", so the model is told it did
   not come from the user, which is what sayso wants.
 
+## How a hook is started
+
+A plain hook entry is a string handed to a shell, and a checkout's `env` reaches that shell before the string runs. A hook
+entry with `args` is not. Version 2.1.303's settings schema says "`command` is resolved as an executable and spawned directly
+with these arguments, no shell", and that is what sayso uses:
+
+```json
+{ "type": "command", "command": "/path/to/hooks/run.sh", "args": ["gate"], "timeout": 3600, "onFailure": "block" }
+```
+
+`hooks/run.sh` has to be an executable file, and nothing in `args` is expanded, so it reads `$HOME` and the rest itself. A
+Claude Code that doesn't know `args` is meant to run `command` in a shell with no arguments, and `run.sh` then exits 2 with a
+message. That reading was not run on an older version. A `/bin/sh` in `command` would be the wrong choice for that case, since
+it would try to read the hook's input as a script.
+
 ## What a repository's settings reach
 
 A checkout's `.claude/settings.json` applies to any session started in it, and its `env` reaches hook processes. Measured
-with `-p`, where no trust dialog appears:
+with `-p`, where no trust dialog appears, trying to run `rm -rf victim`:
 
-| In the project's `env` | What the hook process sees |
-|---|---|
-| `PATH`, `NODE_OPTIONS`, `SAYSO_*` | the repository's value, so the hook command clears its environment and uses absolute paths |
-| `HOME` | Claude Code's own value, not the repository's |
-| `SHELL`, `BASH_ENV`, `ENV` | the repository's value, with no effect on how the command runs |
-| `CLAUDE_CODE_SHELL_PREFIX` | **the hook command never runs**, and the prefix runs in its place |
+| In the project's `env` | A hook started with a shell | A hook started with `args`, through `#!/bin/sh -p` |
+|---|---|---|
+| `SHELLOPTS=noexec` | **the command never runs and exits 0, and `rm -rf` ran** | held |
+| `SHELLOPTS=xtrace` and a command in `PS4` | **the repository's command runs** | held, nothing ran |
+| `BASH_ENV`, `ENV`, `SHELL` | the repository's value, with no effect seen on how the command ran | held |
+| `BASHOPTS`, `BASH_FUNC_*`, `IFS`, `POSIXLY_CORRECT` | not measured | held |
+| `CLAUDE_CODE_SHELL_PREFIX` | **the hook command never runs**, and the prefix runs in its place | held, the prefix is not used |
+| `PATH`, `NODE_OPTIONS`, `SAYSO_*` | the repository's value | held, cleared before anything reads them |
+| `HOME` | Claude Code's own value, not the repository's | the same |
+| `LD_PRELOAD` on Linux, `DYLD_INSERT_LIBRARIES` on macOS with System Integrity Protection off | **a library that exits 0 stops the hook, and `rm -rf` ran** | **the same** |
 
-Nothing in a hook's command can stop that last row, or `disableAllHooks`. Managed settings can: their `env` beats a
-project's, and `sudo sayso harden` uses that.
+The second column was measured on macOS, where `/bin/sh` is bash 3.2, before sayso used `args`. The third is
+`test/attacks.test.mjs` and `test/plugin.test.mjs` on macOS, and `test/harden.mjs` on Linux, with `/bin/sh` as dash and as bash
+5.2. `-p` is what makes bash ignore the options and functions it would otherwise take from the environment. The last row's
+`DYLD_INSERT_LIBRARIES` was a one-off run on a Mac with System Integrity Protection off, and with it on, the system is documented
+to strip that variable from `/bin/sh`, which was not run. A library that fails to load still blocks the call.
+
+`#!/bin/sh -p` runs a shell before `env -i` can, because a hook started with `args` can't expand its own arguments, and that shell
+is how `$CLAUDE_PID` and the rest get through. It uses only absolute paths until the second stage, `run.sh clean <mode>`. The
+stage is an argument and never a variable, because a repository sets the variables.
+
+Nothing in a hook can stop the last row, `disableAllHooks`, or a project's `enabledPlugins`. Managed settings can: their `env` beats
+a project's, their hooks stay, and `sudo sayso harden` uses both.
+
+## SIGUSR1
+
+Node opens an inspector on SIGUSR1, and any process of the same user can send it and then run code inside the gate. Node
+22.14 added `--disable-sigusr1`, and the gate and the daemon both use it. Measured on Node 22.23 and 26.10: the gate outlives
+the signal and the hold goes on. An older Node refuses the flag at start, which `hooks/run.sh` turns into a block.
 
 ## What skips hooks
 
-Hooks in user settings do not run under `--bare`, `--safe-mode`, `disableAllHooks`, or the Agent SDK with
-`settingSources: []`, per Claude Code's documentation, and `disableAllHooks` and `CLAUDE_CODE_SHELL_PREFIX` work from a
-project's settings too. `sudo sayso harden` uses managed hooks, and `test/harden.mjs` shows them still holding the call under
-`--bare`, `--safe-mode`, `--setting-sources project`, and `disableAllHooks` or a project `env` from user or project settings.
+Hooks in user settings do not run under `--bare`, `--safe-mode`, `CLAUDE_CODE_SIMPLE`, `CLAUDE_CODE_SAFE_MODE`, `disableAllHooks`,
+or the Agent SDK with `settingSources: []`, and `disableAllHooks` works from a project's settings too. A plugin's hooks also stop
+under `enabledPlugins` set to false in a project's settings, measured on a real `claude plugin install`. `sudo sayso harden` uses
+managed hooks, and `test/harden.mjs` shows them still holding the call under `--bare`, `--safe-mode`, `--setting-sources project`,
+and `disableAllHooks` or a project `env` from user or project settings.
