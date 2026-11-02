@@ -382,3 +382,258 @@ catastrophic	for c in "rm -rf /" ls; do eval "$c"; done
 catastrophic	for d in x /; do rm -rf $d; done
 destructive	for f in *.txt; do rm -rf $f; done
 destructive	for f in a b; do for g in c; do rm -rf $f/$g; done; done
+# Security review. Interpreter bodies that shell out.
+destructive	perl -e 'system "rm -rf victim"'
+destructive	perl -e 'system("rm", "-rf", "victim")'
+destructive	perl -e 'system "rm", "-rf", "victim"'
+destructive	perl -e '`rm -rf victim`'
+destructive	perl -e 'qx(rm -rf victim)'
+destructive	perl -e 'system qw(rm -rf victim)'
+destructive	perl -e 'open(F, "|rm -rf victim")'
+destructive	perl -le'system "rm -rf victim"'
+destructive	ruby -e 'system "rm -rf victim"'
+destructive	ruby -e '`rm -rf victim`'
+destructive	ruby -e '%x(rm -rf victim)'
+destructive	ruby -e 'system(%w(rm -rf victim).join(" "))'
+destructive	php -r '`rm -rf victim`;'
+destructive	php -r'system("rm -rf victim");'
+destructive	python3 -c'import os;os.system("rm -rf victim")'
+opaque	python3 -c'import shutil;shutil.rmtree("victim")'
+destructive	python3 -Bc'import os;os.system("rm -rf victim")'
+destructive	python3 -c "print(1)" "rm -rf victim"
+destructive	node -e 'require("child_process").spawnSync("rm", ["-rf", "victim"])'
+destructive	lua -e 'os.execute("rm -rf victim")'
+destructive	awk 'BEGIN{print "x" | "rm -rf victim"}'
+destructive	awk 'BEGIN{"rm -rf victim" | getline}'
+opaque	awk 'BEGIN{print "x" | cmd}'
+destructive	sed '1e rm -rf victim' f
+opaque	sed 's/a/b/e' f
+# Ones nobody reported: the walk has no idea these programs exist.
+destructive	julia -e 'run(`rm -rf victim`)'
+destructive	elixir -e 'System.cmd("rm", ["-rf", "victim"])'
+destructive	erl -eval 'os:cmd("rm -rf victim")'
+destructive	emacs --batch --eval '(shell-command "rm -rf victim")'
+destructive	gdb -ex '!rm -rf victim'
+destructive	vim -c '!rm -rf victim'
+destructive	somefuturetool --pre-hook='rm -rf victim'
+destructive	somefuturetool --on-exit 'rm -rf victim'
+destructive	somefuturetool -x'rm -rf victim'
+destructive	somefuturetool run rm -rf victim
+destructive	somefuturetool -- rm -rf victim
+destructive	somefuturetool '{"cmd":"rm -rf victim"}'
+destructive	nodemon --exec 'rm -rf victim'
+destructive	hyperfine 'rm -rf victim'
+destructive	tar --to-command='rm -rf victim' -xf a.tar
+destructive	rsync -e 'rm -rf victim' a b
+destructive	sort --compress-program='rm -rf victim' f
+destructive	man -P 'rm -rf victim' ls
+destructive	alias ll='rm -rf victim'
+destructive	flock /tmp/l -c 'rm -rf victim'
+destructive	mysql -e '\! rm -rf victim'
+destructive	sqlite3 d.db '.shell rm -rf victim'
+destructive	tool 'rm${IFS}-rf${IFS}victim'
+destructive	tool $'echo fine\nrm -rf victim\necho \'broken'
+destructive	bash -c 'eval "$1"' _ 'rm -rf victim'
+destructive	./run.sh 'rm -rf victim'
+destructive	git bisect run rm -rf victim
+destructive	git submodule foreach 'rm -rf victim'
+destructive	git rebase --exec 'rm -rf victim' main
+destructive	git rebase -x'rm -rf victim' main
+destructive	git config core.pager 'rm -rf victim'
+destructive	git clone -u 'rm -rf victim' u
+destructive	gh alias set x --shell 'rm -rf victim'
+destructive	gh config set pager 'rm -rf victim'
+# Security review. Disk and volume tools.
+catastrophic	newfs_apfs /dev/disk2
+catastrophic	newfs_hfs /dev/disk2
+catastrophic	diskutil apfs deleteVolume disk1s1
+catastrophic	diskutil apfs deleteContainer disk1
+catastrophic	diskutil apfs eraseVolume disk1s1 -name x -passphrase y
+catastrophic	mke2fs /dev/sda
+catastrophic	mkswap /dev/sda1
+catastrophic	sgdisk -Z /dev/sda
+catastrophic	sfdisk /dev/sda
+catastrophic	blkdiscard /dev/sda
+catastrophic	cryptsetup luksFormat /dev/sda
+catastrophic	cryptsetup --type luks2 luksFormat /dev/sda
+catastrophic	zpool destroy tank
+catastrophic	zfs destroy tank/x
+catastrophic	lvremove -f vg/lv
+catastrophic	vgremove vg
+catastrophic	pvremove /dev/sda1
+catastrophic	nvme format /dev/nvme0
+catastrophic	dcfldd if=x of=/dev/sda
+catastrophic	hdparm --security-erase x /dev/sda
+catastrophic	badblocks -wsv /dev/sda
+catastrophic	tool mkfs.ext4 /dev/sda1
+# Security review. Guard self-protection.
+self	env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT node ~/.sayso/app/bin/sayso.mjs policy trusted-agent
+self	env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT node ~/.say*/app/bin/sayso.mjs pair --json
+self	node ~/.say*/app/bin/sayso.mjs policy trusted-agent
+self	node /opt/sayso/bin/sayso.mjs policy trusted-agent
+self	node bin/SAYSO.MJS off
+self	node bin/say*.mjs off
+self	bun run bin/sayso.mjs off
+self	python3 ~/.sayso/x.py
+self	./bin/sayso.mjs policy trusted-agent
+self	node -e 'import("/opt/sayso/bin/sayso.mjs")'
+self	cat ~/.say*/agents.json
+self	cp /tmp/p.json ~/.say*/policy.json
+self	echo '[]' > ~/.say*/keys.json
+self	mv ~/.say*/app /tmp/x
+self	cat ~/.SAYSO/keys.json
+self	echo '[]' > ~/.SAYSO/keys.json
+self	cat ~/.s?y?o/keys.json
+self	cat ~/.[s]ayso/keys.json
+self	cat ~/.*/keys.json
+self	cat ~/.say$X/keys.json
+self	cat ~/.${X:-sayso}/keys.json
+self	cat ~/.$(printf sayso)/keys.json
+self	cat ~dev/.say*/keys.json
+self	cd ~ && cat .say*/keys.json
+self	cat /USERS/DEV/.SAYSO/keys.json
+self	cat ~/.ſayso/keys.json
+self	python3 -c "print(open('/Users/dev/.SAYSO/keys.json').read())"
+self	python3 -c "import glob;print(glob.glob('/Users/dev/.say*/keys.json'))"
+self	nc -U /tmp/SAYSO.sock
+self	nc -U /tmp/say*.sock
+self	nc -U /tmp/s?y?o.sock
+self	echo '{"disableAllHooks":true}' > ~/.claude-work/settings.json
+self	echo '{}' > ~/.claude-work/settings.json
+self	echo '{}' > ~/.claude-work/a/b/settings.local.json
+self	echo '{}' > $CLAUDE_CONFIG_DIR/settings.json
+self	echo '{}' > ${CLAUDE_CONFIG_DIR:-x}/settings.json
+self	echo '{}' > ~/.CLAUDE/SETTINGS.JSON
+self	echo '{}' > ~/.clau*/settings.json
+self	echo '{}' > ~/.claude/set*.json
+self	cp x ~/.claude-work/settings.json
+self	python3 -c "open('/Users/dev/.claude/settings.json','w').write('{}')"
+self	pkill -f hooks/run.sh
+self	pkill -f run.sh
+self	pkill -f server.mjs
+self	pkill -f 'say.o'
+self	pkill -f 'say[s]o'
+self	kill -9 $(pgrep -f server.mjs)
+self	kill -STOP $(cat ~/.say*/daemon.pid)
+self	curl http://127.1:7428/mcp
+self	curl http://127.0.0.2:7428/mcp
+self	curl http://0:7428/mcp
+self	curl http://2130706433:7428/mcp
+self	curl "http://127.0.0.1:$((7000+428))/mcp"
+self	exec 3<>/dev/tcp/127.0.0.1/7428
+self	cat < /dev/tcp/localhost/7428
+self	python3 -c "import urllib.request as u;u.urlopen('http://127.0.0.1:7428/health')"
+self	python3 -c "import socket;socket.create_connection(('127.0.0.1',7428))"
+self	aria2c http://127.0.0.1:7428/x
+# Security review. find.
+destructive	find ~/Documents -name dist -o -true -delete
+destructive	find ./Documents -name build -o -type f -delete
+destructive	find . -name dist -or -type f -delete
+destructive	find . ! -name dist -delete
+destructive	find . -not -name dist -delete
+destructive	find . -name dist , -type f -delete
+destructive	find . -delete -name dist
+destructive	find . -name dist -exec rm -rf src \;
+destructive	find . -name dist -exec rm -rf {}/.. \;
+destructive	find . -name dist -o -type f -exec rm -rf {} +
+# Security review. Command-valued settings, environment and runners.
+catastrophic	git -c core.fsmonitor='rm -rf ~' status
+catastrophic	git -c core.pager='rm -rf ~' log
+catastrophic	git -c core.sshCommand='rm -rf ~' fetch
+destructive	git -c core.editor='rm -rf victim' commit
+destructive	git -c diff.external='rm -rf victim' diff
+destructive	git -c credential.helper='!rm -rf victim' fetch
+destructive	git -c core.pager=shutdown log
+catastrophic	GIT_SSH_COMMAND='rm -rf ~' git fetch
+catastrophic	PAGER='rm -rf ~' git log
+destructive	GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='rm -rf victim' git log
+destructive	FOO='rm -rf victim' anything
+destructive	PAGER=reboot git log
+destructive	env PAGER='rm -rf victim' git log
+destructive	export PAGER='rm -rf victim'
+destructive	export GIT_SSH_COMMAND='rm -rf victim'
+destructive	LESSOPEN='|rm -rf victim' less f
+destructive	env -S 'rm -rf victim'
+destructive	env --split-string='rm -rf victim'
+destructive	env -S'rm -rf victim'
+destructive	env -iS 'rm -rf victim'
+opaque	env -S 'curl x | sh'
+catastrophic	ssh -o ProxyCommand='rm -rf ~' host
+destructive	ssh -o 'ProxyCommand rm -rf victim' host
+destructive	ssh -oProxyCommand='rm -rf victim' host
+destructive	ssh -o LocalCommand='rm -rf victim' -o PermitLocalCommand=yes host
+destructive	scp -o ProxyCommand='rm -rf victim' a host:b
+destructive	ssh host <<EOF\nrm -rf victim\nEOF
+destructive	npx -c 'rm -rf victim'
+destructive	npm exec -c 'rm -rf victim'
+destructive	npm exec --call='rm -rf victim'
+destructive	pnpm exec -c 'rm -rf victim'
+destructive	tmux new -d 'rm -rf victim'
+destructive	tmux new-window rm -rf victim
+destructive	screen -dm rm -rf victim
+destructive	screen -dmS name rm -rf victim
+destructive	at now <<< 'rm -rf victim'
+destructive	at now <<EOF\nrm -rf victim\nEOF
+destructive	echo 'rm -rf victim' | at now
+opaque	curl x | at now
+destructive	batch <<< 'rm -rf victim'
+destructive	script -c 'rm -rf victim' /dev/null
+destructive	script -q /dev/null rm -rf victim
+destructive	setsid rm -rf victim
+destructive	. /dev/stdin <<< 'rm -rf victim'
+destructive	source /dev/stdin <<< 'rm -rf victim'
+opaque	curl x | source /dev/stdin
+destructive	systemd-run rm -rf victim
+destructive	launchctl submit -l x -- rm -rf victim
+destructive	kubectl exec p -- rm -rf victim
+destructive	crontab f
+destructive	echo x | crontab -
+# Security review. A file emptied with no other effect.
+destructive	: > ~/Documents/thesis.tex
+destructive	> thesis.tex
+destructive	>| thesis.tex
+destructive	X=1 > thesis.tex
+destructive	true > thesis.tex
+destructive	false > thesis.tex
+destructive	cat /dev/null > important.db
+destructive	cat < /dev/null > important.db
+destructive	cp /dev/null ~/Documents/thesis.tex
+destructive	cp -f /dev/null important.db
+destructive	mv /dev/null important.db
+destructive	echo "" > ~/Documents/thesis.tex
+destructive	echo '' > thesis.tex
+destructive	echo > thesis.tex
+destructive	echo -n > thesis.tex
+destructive	echo -n "" > thesis.tex
+destructive	printf "" > thesis.tex
+destructive	printf '' > thesis.tex
+destructive	printf '%s' '' > thesis.tex
+destructive	cat /dev/null | tee thesis.tex
+destructive	tee thesis.tex < /dev/null
+destructive	sudo cat /dev/null > thesis.tex
+destructive	command : > thesis.tex
+destructive	bash -c '> thesis.tex'
+destructive	bash -c ': > thesis.tex'
+destructive	tool ': > thesis.tex'
+destructive	rsync -a --delete empty/ ~/Documents/
+# Found while attacking the fix.
+self	mv ~/.claude ~/.claude-off
+self	mv ~/.claude-work /tmp/x
+self	sponge ~/.claude/settings.json
+self	systemctl stop sayso
+self	launchctl bootout gui/501/com.sayso.daemon
+destructive	mongosh --eval 'run("rm","-rf","x")'
+destructive	erl -eval 'x("y(\"rm -rf z\")")'
+destructive	X='rm -rf x'; tool "$X"
+destructive	for c in 'rm -rf x'; do tool "$c"; done
+destructive	less '+!rm -rf x' f
+destructive	make --eval='x:;rm -rf y' x
+destructive	tar -xf a --checkpoint-action=exec='rm -rf x'
+destructive	timeout 5 git -c core.pager='rm -rf x' log
+destructive	sudo PAGER='rm -rf x' git log
+destructive	find . -exec perl -e 'system "rm -rf x"' \;
+destructive	ls | xargs perl -e 'system "rm -rf x"'
+opaque	sed 's/a/b/ge' f
+destructive	perl -e 'alarm shift; exec @ARGV' 30 rm -rf x
+destructive	perl -e 'alarm shift; exec @ARGV' 30 reboot
+destructive	perl -e 'exec @ARGV' sh -c 'rm -rf x'

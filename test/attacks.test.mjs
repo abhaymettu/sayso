@@ -223,6 +223,26 @@ describe("a session trying to approve itself", () => {
     }));
 });
 
+describe("a command hidden in a string some other program runs", () => {
+  const hidden = [
+    `perl -e 'system "rm -rf victim"'`,
+    `git -c core.pager='rm -rf victim' log`,
+    `env -S 'rm -rf victim'`,
+  ];
+  for (const command of hidden) {
+    test(`opens a request, and a deny keeps the victim: ${command}`, () =>
+      withRig({}, [bash(command), FINISH], async (rig) => {
+        const session = rig.headless();
+        const request = await rig.nextRequest();
+        assert.equal(request.risk, "destructive");
+        assert.equal(rig.destroyed(), false);
+        await rig.tool("deny", { request_id: request.id });
+        await session.done;
+        assert.equal(rig.destroyed(), false);
+      }));
+  }
+});
+
 describe("someone else on the network or in a browser", () => {
   test("no token, a wrong token and a revoked token all get 401", () =>
     withRig({}, [FINISH], async (rig) => {

@@ -85,7 +85,47 @@ test('relative paths resolve against ctx.cwd', () => {
   assert.equal(classifyShell('rm -rf ..', inHome)?.risk, 'catastrophic');
 });
 
+test('a Claude config dir elsewhere counts through ctx', () => {
+  const ctx = { ...CTX, configDir: '/opt/agent-config' };
+  assert.equal(classifyShell('echo x > /opt/agent-config/settings.json', ctx)?.risk, 'self');
+  assert.equal(classifyShell('echo x > /OPT/agent-config/nested/settings.local.json', ctx)?.risk, 'self');
+  assert.equal(classifyShell('echo x > $CLAUDE_CONFIG_DIR/settings.json', ctx)?.risk, 'self');
+  assert.equal(classifyShell('echo x > /opt/agent-config/notes.json', ctx), null);
+  assert.equal(classifyShell('echo x > /opt/other/settings.json', ctx), null);
+  assert.equal(classifyToolCall('Write', { file_path: '/opt/agent-config/settings.json' }, ctx)?.risk, 'self');
+});
+
+test('a non-dot state directory still compares as a path', () => {
+  const ctx = { ...CTX, stateDir: '/var/lib/guard' };
+  assert.equal(classifyShell('cat /VAR/LIB/GUARD/token', ctx)?.risk, 'self');
+  assert.equal(classifyShell('cat /var/lib/gua*/token', ctx)?.risk, 'self');
+  assert.equal(classifyShell('cat /var/lib/*/token', ctx)?.risk, 'self');
+  assert.equal(classifyShell('cat /var/log/*/token', ctx), null);
+});
+
+test('more strings than the walk will read fails closed instead of going quiet', () => {
+  const words = Array.from({ length: 3000 }, () => '"a b"').join(' ');
+  assert.equal(classifyShell(`tool ${words}`, CTX)?.risk, 'opaque');
+});
+
+test('an adversarial command stays fast', () => {
+  const nested = Array.from({ length: 2000 }, () => '"x=y z"').join(' ');
+  for (const command of [`tool ${nested}`, `${'a -- '.repeat(3000)}x`, `sh -c "${'sh -c '.repeat(1500)}x"`]) {
+    const start = performance.now();
+    classifyShell(command, CTX);
+    assert.ok(performance.now() - start < 1500, `took ${performance.now() - start} ms`);
+  }
+});
+
 const toolCases = [
+  ['Write', { file_path: '/Users/dev/.SAYSO/keys.json' }, 'self'],
+  ['Read', { file_path: '/Users/dev/.SAYSO/keys.json' }, 'self'],
+  ['Write', { file_path: '/Users/dev/.claude-work/settings.json' }, 'self'],
+  ['Edit', { file_path: '/Users/dev/.claude-work/nested/settings.local.json' }, 'self'],
+  ['Write', { file_path: '/Users/dev/.claude/notes.json' }, null],
+  ['Grep', { pattern: 'x', path: '/Users/dev/.sayso' }, 'self'],
+  ['Glob', { pattern: '*', path: '/Users/dev/.SAYSO' }, 'self'],
+  ['Grep', { pattern: 'x', path: 'src' }, null],
   ['Bash', { command: 'rm -rf /' }, 'catastrophic'],
   ['Monitor', { command: 'rm -rf x' }, 'destructive'],
   ['Bash', { command: 'ls' }, null],
