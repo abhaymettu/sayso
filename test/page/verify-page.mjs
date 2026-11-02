@@ -86,7 +86,7 @@ const TESTS = {
     const body = await page.locator("#app").innerText();
     assert.ok(body.includes(pairing.id), "shows the key id");
     assert.ok(body.includes("close this page"), "says the page can be closed");
-    assert.ok(body.includes("home screen") && body.includes("sayso pair"), "explains the iPhone week limit and the way back");
+    assert.ok(body.includes("a week") && body.includes("sayso pair"), "explains the iPhone week limit and the way back");
     await assertNoOverflow(page, "paired");
 
     await page.goto("about:blank");
@@ -188,6 +188,7 @@ const TESTS = {
     const doc = fixtureDoc();
     await page.goto("about:blank");
     await page.goto(requestUrl(base, doc));
+    await page.locator(".hold:not([disabled])").waitFor();
     await page.locator(".hold").focus();
     await page.keyboard.press("Space");
     await page.waitForTimeout(500);

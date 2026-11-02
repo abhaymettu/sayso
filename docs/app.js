@@ -191,8 +191,9 @@ function holdToConfirm(button, onConfirm) {
   run.pause();
   let pressed = false;
 
+  // A browser still delivers pointer events to a disabled button. Only the click is withheld.
   const press = () => {
-    if (pressed) return;
+    if (pressed || button.disabled) return;
     pressed = true;
     button.dataset.pressed = "";
     run.playbackRate = 1;
